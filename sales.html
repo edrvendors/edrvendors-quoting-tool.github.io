@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sales — Vendor Quote Tool</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body class="role-sales">
+<div class="wrap">
+
+  <div class="topbar">
+    <a href="index.html" class="back-link">← All tools</a>
+    <span class="role-badge">Sales</span>
+  </div>
+
+  <h1 class="page-title">Build a quote</h1>
+  <p class="page-sub">Location narrows results the most. Size and debris type sharpen it further — none of the three are required to search.</p>
+
+  <div class="panel">
+    <div class="field-grid">
+      <div class="field">
+        <label for="location">Zip or City, ST</label>
+        <input id="location" type="text" placeholder="e.g. Portland, OR">
+      </div>
+      <div class="field">
+        <label for="size">Container size</label>
+        <select id="size">
+          <option value="any">Any size</option>
+          <option value="10">10 yd</option>
+          <option value="20">20 yd</option>
+          <option value="30">30 yd</option>
+          <option value="40">40 yd</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="debris">Debris type</label>
+        <select id="debris"><option value="any">Any type</option></select>
+      </div>
+      <div class="field">
+        <label for="tons">Tonnage (if known)</label>
+        <input id="tons" type="number" min="0" step="0.1" placeholder="e.g. 2.5">
+      </div>
+    </div>
+
+    <details class="addons">
+      <summary>Add-ons (optional)</summary>
+      <div class="field-grid">
+        <div class="field">
+          <label for="delivery">Delivery $</label>
+          <input id="delivery" type="number" min="0" step="1" placeholder="0">
+        </div>
+        <div class="field">
+          <label for="fuel">Fuel surcharge $</label>
+          <input id="fuel" type="number" min="0" step="1" placeholder="0">
+        </div>
+        <div class="field">
+          <label for="overage">Overage $</label>
+          <input id="overage" type="number" min="0" step="1" placeholder="0">
+        </div>
+      </div>
+    </details>
+
+    <button class="btn" id="search-btn" type="button">Get pricing →</button>
+  </div>
+
+  <div class="results-heading">Results</div>
+  <div id="results"></div>
+
+  <p class="note">Pricing shown here runs on placeholder data while the vendor spreadsheet is finished — treat numbers as a preview of how quotes will look, not real pricing yet.</p>
+
+</div>
+
+<script type="module" src="js/sales.js"></script>
+</body>
+</html>
