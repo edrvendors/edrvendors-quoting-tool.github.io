@@ -1,159 +1,163 @@
 /* =========================================================
-   QUOTE ENGINE
-   Location fallback (city -> county -> state -> regional),
-   pricing-model math, and the Cost / 0.74 quoting formula.
-   Kept framework-free so it works the same against this
-   placeholder data or the real generated JSON later.
+   QUOTE ENGINE (v2)
+
+   Key rules, confirmed with Dee:
+   - Reps never enter tonnage — the site shows what each vendor offers.
+   - Quoted tonnage always follows the standard convention by size
+     (1T/10YD, 2T/20YD, 3T/30YD, 4T/40YD), even if a vendor's real data
+     would allow more. That gap is unbilled overage headroom, not shown.
+   - Rental period shown is whatever the vendor's data actually says —
+     there's no equivalent fixed convention for days.
+   - Markup order: (base price + vendor's delivery/fuel fees) -> tax ->
+     ÷0.74 (COGS), in that order, COGS last.
+   - Overage rates (per-ton, per-day) get tax + ÷0.74 too, but NOT the
+     delivery/fuel fees (those are one-time container fees, not per-unit).
+   - Haul + Disposal is the one model where a rep can flex tonnage; the
+     price recalculates live from the same per-ton rate used for overage.
+   - No cost/tax/margin breakdown is ever shown to a sales rep — just the
+     final numbers.
    ========================================================= */
 
 import {
-  PRICING_RULES, TAX_RULES, CITY_COUNTY_MAP,
-  FALLBACK_BUFFER, MARGIN_DIVISOR,
+  PRICING_RULES, ZIP_TO_LOCATION, STANDARD_TONS_BY_SIZE,
+  MARGIN_DIVISOR,
 } from './data.js';
 
-const TIER_ORDER = ['city', 'county', 'state', 'regional'];
-const TIER_LABEL = { city: 'City', county: 'County', state: 'State', regional: 'Regional (unconfirmed)' };
+const TIER_LABEL = { city: 'City match', state: 'State match', regional: 'Regional estimate' };
+const TAX_RATE = 0; // placeholder — this filler sheet has no tax column yet
 
-/** Best-effort split of free-text "City, ST" or a zip into parts.
- *  Zip-to-location resolution isn't wired up yet — see note in resolveLocation(). */
-export function parseLocation(raw) {
+export function parseCityState(raw) {
   const value = (raw || '').trim();
-  if (!value) return { city: '', state: '', zip: '' };
-
-  if (/^\d{5}$/.test(value)) return { city: '', state: '', zip: value };
-
+  if (!value) return { city: '', state: '' };
   const parts = value.split(',').map(s => s.trim()).filter(Boolean);
-  if (parts.length >= 2) {
-    return { city: parts[0], state: parts[1].toUpperCase().slice(0, 2), zip: '' };
-  }
-  return { city: parts[0] || '', state: '', zip: '' };
+  if (parts.length >= 2) return { city: parts[0], state: parts[1].toUpperCase().slice(0, 2) };
+  return { city: parts[0] || '', state: '' };
 }
 
-function cityCounty(city, state) {
-  if (!city || !state) return '';
-  return CITY_COUNTY_MAP[`${city.toLowerCase()}|${state.toUpperCase()}`] || '';
+export function resolveZip(raw) {
+  const zip = (raw || '').trim();
+  if (!/^\d{5}$/.test(zip)) return null;
+  return ZIP_TO_LOCATION[zip] || null;
 }
 
-/** Walks city -> county -> state -> regional and returns the first
- *  tier with any matching rows, plus which tier it landed on. */
-function resolveTier(rows, location) {
-  const { city, state, zip } = location;
-
-  if (zip && !city && !state) {
-    // No real zip database wired up yet — regional is the honest answer for now.
-    const regional = rows.filter(r => r.tier === 'regional');
-    return { tier: 'regional', rows: regional, note: 'Zip lookup isn\u2019t wired to real geography yet — showing the regional fallback.' };
-  }
-
+/** city -> state -> regional. No county tier — the real sheet has no
+ *  county data, so that tier from the earlier mock is dropped for now. */
+function resolveTier(rows, { city, state }) {
   if (city && state) {
-    const cityRows = rows.filter(r => r.tier === 'city' && r.city?.toLowerCase() === city.toLowerCase() && r.state === state);
+    const cityRows = rows.filter(r => r.city?.toLowerCase() === city.toLowerCase() && r.state === state);
     if (cityRows.length) return { tier: 'city', rows: cityRows };
-
-    const county = cityCounty(city, state);
-    if (county) {
-      const countyRows = rows.filter(r => r.tier === 'county' && r.county === county && r.state === state);
-      if (countyRows.length) return { tier: 'county', rows: countyRows };
-    }
   }
-
   if (state) {
-    const stateRows = rows.filter(r => r.tier === 'state' && r.state === state);
+    const stateRows = rows.filter(r => r.state === state);
     if (stateRows.length) return { tier: 'state', rows: stateRows };
   }
-
-  const regional = rows.filter(r => r.tier === 'regional');
-  return { tier: 'regional', rows: regional };
+  return { tier: 'regional', rows: [] }; // no real "regional" pool without a state to anchor to
 }
 
-function debrisMatches(rowDebris, wantedId) {
-  if (!wantedId || wantedId === 'any') return true;
-  if (rowDebris === 'all') return true;
-  return Array.isArray(rowDebris) && rowDebris.includes(wantedId);
+function includedTons(row) {
+  if (row.pricingModel === 'flat') return null;
+  return STANDARD_TONS_BY_SIZE[row.size] ?? row.rawTons ?? null;
 }
 
-/** Computes cost, quote, add-ons, tax, and total for one pricing row.
- *  addons = { delivery, fuel, overage } — each optional, in dollars. */
-function priceRow(row, { tons, addons, taxRate }) {
-  let cost = null;
-  let costNote = '';
+function markup(amount, { withFees = 0 } = {}) {
+  const afterFees = amount + withFees;
+  const afterTax = afterFees * (1 + TAX_RATE);
+  return afterTax / MARGIN_DIVISOR;
+}
 
+/** Computes the full customer-facing quote for one pricing rule.
+ *  overrideTons lets the haul+disposal adjuster recalculate live. */
+export function priceRule(row, overrideTons = null) {
+  const fees = (row.delivery || 0) + (row.fuelSurcharge || 0);
+  const tons = row.pricingModel === 'haul_plus_disposal'
+    ? (overrideTons ?? STANDARD_TONS_BY_SIZE[row.size] ?? 1)
+    : includedTons(row);
+
+  let basePrice;
   if (row.pricingModel === 'haul_plus_disposal') {
-    if (tons > 0) {
-      cost = row.haulCost + row.perTonRate * tons;
-    } else {
-      cost = row.haulCost;
-      costNote = 'Haul cost only — enter tonnage for the disposal charge.';
-    }
+    basePrice = (row.haulRate || 0) + (row.perTon || 0) * tons;
   } else {
-    cost = row.flatRate;
+    basePrice = row.price || 0;
   }
 
-  const isEstimate = row.tier !== 'city';
-  const costHigh = isEstimate ? cost + FALLBACK_BUFFER : cost;
+  const total = markup(basePrice, { withFees: fees });
 
-  const addonsTotal = (addons.delivery || 0) + (addons.fuel || 0) + (addons.overage || 0);
-
-  const quote = cost / MARGIN_DIVISOR + addonsTotal;
-  const quoteHigh = costHigh / MARGIN_DIVISOR + addonsTotal;
-
-  const tax = quote * (taxRate || 0);
-  const taxHigh = quoteHigh * (taxRate || 0);
+  const tonOverageRaw = row.pricingModel === 'haul_plus_disposal' ? row.perTon : row.tonOverageRate;
+  const tonOverage = tonOverageRaw != null ? markup(tonOverageRaw) : null;
+  const dayOverage = row.dayOverageRate != null ? markup(row.dayOverageRate) : null;
 
   return {
-    cost, costHigh, costNote,
-    addonsTotal,
-    quote, quoteHigh,
-    tax, taxHigh,
-    total: quote + tax,
-    totalHigh: quoteHigh + taxHigh,
-    isEstimate,
+    tons,
+    rentalDays: row.rentalDays,
+    total,
+    tonOverage,
+    dayOverage,
+    isFlat: row.pricingModel === 'flat',
+    isHaulPlusDisposal: row.pricingModel === 'haul_plus_disposal',
   };
 }
 
-/** Main entry point used by both sales.js and admin.js.
- *  filters = { locationRaw, size, debrisId, tons, addons } */
-export function getQuotes(filters) {
-  const location = parseLocation(filters.locationRaw);
-  const hasLocation = !!(location.city || location.state || location.zip);
+function debrisMatches() {
+  // This filler sheet has no per-vendor debris data yet, so nothing is
+  // ever filtered out by debris type — matches Dee's rule that debris
+  // type should never remove a vendor from the results.
+  return true;
+}
 
+/** Admin search — direct substring match on city and/or vendor name,
+ *  no location fallback logic (that's a sales-flow concept). */
+export function searchAdmin({ cityRaw, vendorRaw }) {
+  const city = (cityRaw || '').trim().toLowerCase();
+  const vendor = (vendorRaw || '').trim().toLowerCase();
+  if (!city && !vendor) return [];
+  return PRICING_RULES
+    .filter(r => (!city || r.city?.toLowerCase().includes(city)) &&
+                 (!vendor || r.vendor?.toLowerCase().includes(vendor)))
+    .map(row => ({ row, price: priceRule(row) }));
+}
+
+/** filters = { zipRaw, locationRaw, size, debrisId } */
+export function getQuotes(filters) {
+  const zipEntered = (filters.zipRaw || '').trim();
+  const cityState = parseCityState(filters.locationRaw);
+  const hasCityState = !!(cityState.city || cityState.state);
+
+  let location = cityState;
+  let note = '';
+
+  if (!hasCityState && zipEntered) {
+    const resolved = resolveZip(zipEntered);
+    if (resolved) {
+      location = resolved;
+    } else {
+      note = `Zip ${zipEntered} isn\u2019t in this sample data yet \u2014 try a city and state instead.`;
+    }
+  }
+
+  const hasLocation = hasCityState || !!zipEntered;
   if (!hasLocation) {
     return { hasLocation: false, tier: null, tierLabel: '', results: [], note: '' };
   }
 
-  const priceMatch = resolveTier(PRICING_RULES, location);
-  const taxMatch = resolveTier(TAX_RULES, location);
-  const taxRate = taxMatch.rows[0]?.rate ?? 0;
-
-  let rows = priceMatch.rows;
+  const match = resolveTier(PRICING_RULES, location);
+  let rows = match.rows;
   if (filters.size && filters.size !== 'any') {
     rows = rows.filter(r => String(r.size) === String(filters.size));
   }
-  rows = rows.filter(r => debrisMatches(r.debrisTypeIds, filters.debrisId));
+  rows = rows.filter(debrisMatches);
 
-  const results = rows.map(row => ({
-    row,
-    price: priceRow(row, { tons: filters.tons, addons: filters.addons, taxRate }),
-  }));
+  const results = rows.map(row => ({ row, price: priceRule(row) }));
 
   return {
     hasLocation: true,
-    tier: priceMatch.tier,
-    tierLabel: TIER_LABEL[priceMatch.tier],
-    note: priceMatch.note || '',
+    tier: match.tier,
+    tierLabel: TIER_LABEL[match.tier],
+    note,
     results,
-    taxRate,
   };
 }
 
-export function vendorName(vendorId, vendors) {
-  return vendors.find(v => v.id === vendorId)?.name || 'Unknown vendor';
-}
-
-export function debrisNames(ids, debrisTypes) {
-  if (ids === 'all') return 'All debris types';
-  return ids.map(id => debrisTypes.find(d => d.id === id)?.name || id).join(', ');
-}
-
 export function money(n) {
+  if (n == null) return '\u2014';
   return n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
 }

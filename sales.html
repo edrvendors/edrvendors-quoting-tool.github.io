@@ -18,19 +18,24 @@
   </div>
 
   <h1 class="page-title">Build a quote</h1>
-  <p class="page-sub">Location narrows results the most. Size and debris type sharpen it further — none of the three are required to search.</p>
+  <p class="page-sub">Enter a zip or city/state, then size and debris type if you know them. You'll see every vendor that services the area, ready to quote.</p>
 
   <div class="panel">
     <div class="field-grid">
       <div class="field">
-        <label for="location">Zip or City, ST</label>
-        <input id="location" type="text" placeholder="e.g. Portland, OR">
+        <label for="zip">Zip code</label>
+        <input id="zip" type="text" inputmode="numeric" placeholder="e.g. 97201">
+      </div>
+      <div class="field">
+        <label for="location">City, ST</label>
+        <input id="location" type="text" placeholder="e.g. Fairhope, AL">
       </div>
       <div class="field">
         <label for="size">Container size</label>
         <select id="size">
           <option value="any">Any size</option>
           <option value="10">10 yd</option>
+          <option value="15">15 yd</option>
           <option value="20">20 yd</option>
           <option value="30">30 yd</option>
           <option value="40">40 yd</option>
@@ -40,29 +45,7 @@
         <label for="debris">Debris type</label>
         <select id="debris"><option value="any">Any type</option></select>
       </div>
-      <div class="field">
-        <label for="tons">Tonnage (if known)</label>
-        <input id="tons" type="number" min="0" step="0.1" placeholder="e.g. 2.5">
-      </div>
     </div>
-
-    <details class="addons">
-      <summary>Add-ons (optional)</summary>
-      <div class="field-grid">
-        <div class="field">
-          <label for="delivery">Delivery $</label>
-          <input id="delivery" type="number" min="0" step="1" placeholder="0">
-        </div>
-        <div class="field">
-          <label for="fuel">Fuel surcharge $</label>
-          <input id="fuel" type="number" min="0" step="1" placeholder="0">
-        </div>
-        <div class="field">
-          <label for="overage">Overage $</label>
-          <input id="overage" type="number" min="0" step="1" placeholder="0">
-        </div>
-      </div>
-    </details>
 
     <button class="btn" id="search-btn" type="button">Get pricing →</button>
   </div>
@@ -70,7 +53,7 @@
   <div class="results-heading">Results</div>
   <div id="results"></div>
 
-  <p class="note">Pricing shown here runs on placeholder data while the vendor spreadsheet is finished — treat numbers as a preview of how quotes will look, not real pricing yet.</p>
+  <p class="note">Running on a sample vendor list while the full spreadsheet is finished — prices are real from that sample, but coverage is limited.</p>
 
 </div>
 

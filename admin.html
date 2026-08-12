@@ -17,60 +17,27 @@
     <span class="role-badge">Admin</span>
   </div>
 
-  <h1 class="page-title">Full vendor data</h1>
-  <p class="page-sub">Same search as the sales view, plus vendor name, raw cost, pricing model, and match tier for every result.</p>
+  <h1 class="page-title">Vendor lookup</h1>
+  <p class="page-sub">Search by city or vendor name to see the real vendor data behind the quotes — raw price, real tonnage, fees, and overage rates.</p>
 
   <div class="panel">
     <div class="field-grid">
       <div class="field">
-        <label for="location">Zip or City, ST</label>
-        <input id="location" type="text" placeholder="e.g. Portland, OR">
+        <label for="city">City, ST</label>
+        <input id="city" type="text" placeholder="e.g. Fairhope, AL">
       </div>
       <div class="field">
-        <label for="size">Container size</label>
-        <select id="size">
-          <option value="any">Any size</option>
-          <option value="10">10 yd</option>
-          <option value="20">20 yd</option>
-          <option value="30">30 yd</option>
-          <option value="40">40 yd</option>
-        </select>
-      </div>
-      <div class="field">
-        <label for="debris">Debris type</label>
-        <select id="debris"><option value="any">Any type</option></select>
-      </div>
-      <div class="field">
-        <label for="tons">Tonnage (if known)</label>
-        <input id="tons" type="number" min="0" step="0.1" placeholder="e.g. 2.5">
+        <label for="vendor">Vendor name</label>
+        <input id="vendor" type="text" placeholder="e.g. Big Red">
       </div>
     </div>
-
-    <details class="addons">
-      <summary>Add-ons (optional)</summary>
-      <div class="field-grid">
-        <div class="field">
-          <label for="delivery">Delivery $</label>
-          <input id="delivery" type="number" min="0" step="1" placeholder="0">
-        </div>
-        <div class="field">
-          <label for="fuel">Fuel surcharge $</label>
-          <input id="fuel" type="number" min="0" step="1" placeholder="0">
-        </div>
-        <div class="field">
-          <label for="overage">Overage $</label>
-          <input id="overage" type="number" min="0" step="1" placeholder="0">
-        </div>
-      </div>
-    </details>
-
-    <button class="btn" id="search-btn" type="button">Get pricing →</button>
+    <button class="btn" id="search-btn" type="button">Search →</button>
   </div>
 
   <div class="results-heading">Results</div>
   <div id="results"></div>
 
-  <p class="note">Running on placeholder data until the vendor spreadsheet is finished. Sales reps see the quote total only — this view exists so admins can sanity-check the underlying cost and margin.</p>
+  <p class="note">Running on the sample vendor list while the full spreadsheet is finished.</p>
 
 </div>
 
