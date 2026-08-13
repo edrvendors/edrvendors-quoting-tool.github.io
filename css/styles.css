@@ -8,12 +8,11 @@
   --bg: #15181c;
   --surface: #1c2025;
   --surface-2: #262b31;
-  --border: #33393f;
-  --border-soft: #2a2f35;
+  --border: #3c434a;
+  --border-soft: #333941;
 
-  --text: #edeef0;
-  --text-muted: #8b939b;
-  --text-faint: #5b6167;
+  --text: #f5f6f7;
+  --text-muted: #b7c0c8;   /* ~7.7:1 contrast on --bg — was too dim before */
 
   --amber: #e8a33d;
   --amber-soft: rgba(232, 163, 61, 0.12);
@@ -21,10 +20,10 @@
 
   --steel: #5b8aac;
   --steel-soft: rgba(91, 138, 172, 0.14);
-  --steel-text: #8fb4cf;
+  --steel-text: #9dc3dd;
 
-  --caution: #c9762c;
-  --caution-soft: rgba(201, 118, 44, 0.14);
+  --caution: #e0a44a;
+  --caution-soft: rgba(224, 164, 74, 0.14);
 
   --radius: 10px;
   --radius-sm: 6px;
@@ -112,7 +111,7 @@ button, input, select {
 
 .masthead__tag {
   color: var(--text-muted);
-  font-size: 0.9rem;
+  font-size: 0.92rem;
 }
 
 .lanes {
@@ -136,7 +135,7 @@ button, input, select {
 
 .lane__eyebrow {
   font-family: var(--font-mono);
-  font-size: 0.78rem;
+  font-size: 0.82rem;
   text-transform: uppercase;
   letter-spacing: 0.12em;
 }
@@ -194,14 +193,14 @@ button, input, select {
 
 .back-link {
   color: var(--text-muted);
-  font-size: 0.9rem;
+  font-size: 0.92rem;
   font-family: var(--font-mono);
 }
 .back-link:hover { color: var(--text); }
 
 .role-badge {
   font-family: var(--font-mono);
-  font-size: 0.72rem;
+  font-size: 0.76rem;
   letter-spacing: 0.1em;
   text-transform: uppercase;
   padding: 5px 10px;
@@ -242,7 +241,7 @@ button, input, select {
 
 .field label {
   display: block;
-  font-size: 0.82rem;
+  font-size: 0.88rem;
   color: var(--text-muted);
   margin-bottom: 6px;
 }
@@ -257,36 +256,11 @@ button, input, select {
   color: var(--text);
 }
 
-.field input::placeholder { color: var(--text-faint); }
+.field input::placeholder { color: var(--text-muted); opacity: 0.75; }
 
 .field input:focus,
 .field select:focus {
   border-color: var(--role);
-}
-
-.addons {
-  margin-top: 18px;
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-sm);
-  padding: 4px 14px;
-}
-
-.addons summary {
-  cursor: pointer;
-  padding: 10px 0;
-  color: var(--text-muted);
-  font-size: 0.88rem;
-}
-
-.addons[open] summary { color: var(--text); }
-
-.addons .field-grid {
-  grid-template-columns: repeat(3, 1fr);
-  padding-bottom: 16px;
-}
-
-@media (max-width: 560px) {
-  .addons .field-grid { grid-template-columns: 1fr; }
 }
 
 .btn {
@@ -310,7 +284,7 @@ button, input, select {
 
 .results-heading {
   font-family: var(--font-mono);
-  font-size: 0.78rem;
+  font-size: 0.85rem;
   text-transform: uppercase;
   letter-spacing: 0.1em;
   color: var(--text-muted);
@@ -330,14 +304,14 @@ button, input, select {
   align-items: center;
   gap: 8px;
   font-family: var(--font-mono);
-  font-size: 0.85rem;
+  font-size: 0.88rem;
   margin-bottom: 18px;
   color: var(--text-muted);
 }
 
 .match-tier .badge {
   font-family: var(--font-mono);
-  font-size: 0.7rem;
+  font-size: 0.75rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   padding: 3px 8px;
@@ -369,11 +343,6 @@ button, input, select {
   font-size: 1.1rem;
 }
 
-.result-debris {
-  color: var(--text-muted);
-  font-size: 0.85rem;
-}
-
 .result-total {
   font-family: var(--font-mono);
   font-size: 1.5rem;
@@ -385,23 +354,26 @@ button, input, select {
   color: var(--text-muted);
 }
 
+/* Vendor name/phone and the tons/days/overage line are what a rep reads
+   straight to a customer, so these stay near full brightness rather
+   than the muted secondary tone. */
 .result-vendor {
   font-family: var(--font-mono);
-  font-size: 0.78rem;
-  color: var(--text-faint);
+  font-size: 0.88rem;
+  color: var(--text);
   margin-top: 2px;
 }
 
 .result-city-note {
-  font-size: 0.78rem;
+  font-size: 0.85rem;
   color: var(--text-muted);
   margin-top: 2px;
 }
 
 .result-detail-row {
   margin-top: 10px;
-  font-size: 0.88rem;
-  color: var(--text-muted);
+  font-size: 0.94rem;
+  color: var(--text);
 }
 
 .adjuster {
@@ -416,7 +388,7 @@ button, input, select {
 
 .badge--info {
   font-family: var(--font-mono);
-  font-size: 0.7rem;
+  font-size: 0.75rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   padding: 3px 8px;
@@ -431,7 +403,7 @@ button, input, select {
   align-items: center;
   gap: 10px;
   font-family: var(--font-mono);
-  font-size: 0.9rem;
+  font-size: 0.95rem;
 }
 
 .stepper button {
@@ -456,14 +428,14 @@ button, input, select {
 
 .breakdown summary {
   cursor: pointer;
-  font-size: 0.82rem;
+  font-size: 0.88rem;
   color: var(--text-muted);
 }
 
 .breakdown-rows {
   margin-top: 10px;
   font-family: var(--font-mono);
-  font-size: 0.85rem;
+  font-size: 0.9rem;
 }
 
 .breakdown-row {
@@ -487,7 +459,7 @@ button, input, select {
   grid-template-columns: repeat(4, auto);
   gap: 6px 22px;
   font-family: var(--font-mono);
-  font-size: 0.78rem;
+  font-size: 0.85rem;
   color: var(--text-muted);
 }
 
@@ -501,6 +473,6 @@ button, input, select {
   margin-top: 40px;
   padding-top: 20px;
   border-top: 1px solid var(--border-soft);
-  color: var(--text-faint);
-  font-size: 0.82rem;
+  color: var(--text-muted);
+  font-size: 0.88rem;
 }

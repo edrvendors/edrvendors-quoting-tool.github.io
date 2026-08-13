@@ -11,6 +11,7 @@ const MODEL_LABEL = {
 function currentFilters() {
   return {
     cityRaw: document.getElementById('city').value,
+    stateRaw: document.getElementById('state').value,
     vendorRaw: document.getElementById('vendor').value,
   };
 }

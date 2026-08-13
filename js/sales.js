@@ -15,7 +15,8 @@ let lastLocation = { city: '', state: '' };
 function currentFilters() {
   return {
     zipRaw: document.getElementById('zip').value,
-    locationRaw: document.getElementById('location').value,
+    cityRaw: document.getElementById('city').value,
+    stateRaw: document.getElementById('state').value,
     size: document.getElementById('size').value,
     debrisId: document.getElementById('debris').value,
   };
@@ -116,7 +117,7 @@ function render(data) {
 }
 
 document.getElementById('search-btn').addEventListener('click', () => render(getQuotes(currentFilters())));
-['zip', 'location'].forEach(id => {
+['zip', 'city'].forEach(id => {
   document.getElementById(id).addEventListener('keydown', e => {
     if (e.key === 'Enter') render(getQuotes(currentFilters()));
   });

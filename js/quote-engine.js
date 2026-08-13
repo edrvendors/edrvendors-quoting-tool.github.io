@@ -26,14 +26,6 @@ import {
 const TIER_LABEL = { city: 'City match', state: 'State match', regional: 'Regional estimate' };
 const TAX_RATE = 0; // placeholder — this filler sheet has no tax column yet
 
-export function parseCityState(raw) {
-  const value = (raw || '').trim();
-  if (!value) return { city: '', state: '' };
-  const parts = value.split(',').map(s => s.trim()).filter(Boolean);
-  if (parts.length >= 2) return { city: parts[0], state: parts[1].toUpperCase().slice(0, 2) };
-  return { city: parts[0] || '', state: '' };
-}
-
 export function resolveZip(raw) {
   const zip = (raw || '').trim();
   if (!/^\d{5}$/.test(zip)) return null;
@@ -43,8 +35,10 @@ export function resolveZip(raw) {
 /** city -> state -> regional. No county tier — the real sheet has no
  *  county data, so that tier from the earlier mock is dropped for now. */
 function resolveTier(rows, { city, state }) {
-  if (city && state) {
-    const cityRows = rows.filter(r => r.city?.toLowerCase() === city.toLowerCase() && r.state === state);
+  if (city) {
+    const cityRows = state
+      ? rows.filter(r => r.city?.toLowerCase() === city.toLowerCase() && r.state === state)
+      : rows.filter(r => r.city?.toLowerCase() === city.toLowerCase());
     if (cityRows.length) return { tier: 'city', rows: cityRows };
   }
   if (state) {
@@ -104,22 +98,24 @@ function debrisMatches() {
   return true;
 }
 
-/** Admin search — direct substring match on city and/or vendor name,
- *  no location fallback logic (that's a sales-flow concept). */
-export function searchAdmin({ cityRaw, vendorRaw }) {
+/** Admin search — direct substring/exact match on city, state, and/or
+ *  vendor name, no location fallback logic (that's a sales-flow concept). */
+export function searchAdmin({ cityRaw, stateRaw, vendorRaw }) {
   const city = (cityRaw || '').trim().toLowerCase();
+  const state = (stateRaw || '').trim().toUpperCase();
   const vendor = (vendorRaw || '').trim().toLowerCase();
-  if (!city && !vendor) return [];
+  if (!city && !state && !vendor) return [];
   return PRICING_RULES
     .filter(r => (!city || r.city?.toLowerCase().includes(city)) &&
+                 (!state || r.state === state) &&
                  (!vendor || r.vendor?.toLowerCase().includes(vendor)))
     .map(row => ({ row, price: priceRule(row) }));
 }
 
-/** filters = { zipRaw, locationRaw, size, debrisId } */
+/** filters = { zipRaw, cityRaw, stateRaw, size, debrisId } */
 export function getQuotes(filters) {
   const zipEntered = (filters.zipRaw || '').trim();
-  const cityState = parseCityState(filters.locationRaw);
+  const cityState = { city: (filters.cityRaw || '').trim(), state: (filters.stateRaw || '').trim().toUpperCase() };
   const hasCityState = !!(cityState.city || cityState.state);
 
   let location = cityState;
