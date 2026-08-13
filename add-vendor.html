@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Add Vendor — Vendor Quote Tool</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body class="role-vendor">
+<div class="wrap">
+
+  <div class="topbar">
+    <a href="index.html" class="back-link">← All tools</a>
+    <span class="role-badge">Add Vendor</span>
+  </div>
+
+  <h1 class="page-title">Add a new vendor</h1>
+  <p class="page-sub">Found a vendor that isn't in the system yet? Send the details here and it'll get added to the sheet.</p>
+
+  <div class="panel">
+    <form data-vendor-form
+          data-success-message="We'll get this vendor added to the sheet."
+          action="https://formspree.io/f/mnpavgzw" method="POST">
+
+      <div class="field-grid">
+        <div class="field">
+          <label for="vendor-name">Vendor name</label>
+          <input id="vendor-name" name="Vendor name" type="text" placeholder="e.g. Big Red Rolloffs" required>
+        </div>
+
+        <div class="field">
+          <label for="vendor-phone">Vendor phone number</label>
+          <input id="vendor-phone" name="Vendor phone number" type="tel" placeholder="e.g. (555) 123-4567" required>
+        </div>
+
+        <div class="field">
+          <label for="pricing-model">Pricing model</label>
+          <select id="pricing-model" name="Pricing model">
+            <option value="">Select if known</option>
+            <option value="Haul + Disposal">Haul + Disposal</option>
+            <option value="Standard">Standard</option>
+            <option value="Flat">Flat</option>
+            <option value="Not sure">Not sure</option>
+          </select>
+        </div>
+
+        <div class="field field--full">
+          <label for="vendor-notes">Notes</label>
+          <textarea id="vendor-notes" name="Notes" rows="4" placeholder="City/area served, pricing details, anything else useful"></textarea>
+        </div>
+      </div>
+
+      <input type="text" name="_gotcha" style="display:none" tabindex="-1" autocomplete="off">
+      <input type="hidden" name="_subject" value="New Add Vendor request">
+
+      <p class="form-error" data-form-error hidden>Something went wrong sending this — check your connection and try again in a moment.</p>
+
+      <button class="btn" type="submit">Send request →</button>
+    </form>
+  </div>
+
+</div>
+
+<script type="module" src="js/vendor-request.js"></script>
+</body>
+</html>

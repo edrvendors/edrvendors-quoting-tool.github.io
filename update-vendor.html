@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Update Vendor — Vendor Quote Tool</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body class="role-vendor">
+<div class="wrap">
+
+  <div class="topbar">
+    <a href="index.html" class="back-link">← All tools</a>
+    <span class="role-badge">Update Vendor</span>
+  </div>
+
+  <h1 class="page-title">Request a vendor update</h1>
+  <p class="page-sub">Spotted outdated pricing, coverage, or contact info for a vendor already in the system? Let us know here.</p>
+
+  <div class="panel">
+    <form data-vendor-form
+          data-success-message="We'll get this update made."
+          action="https://formspree.io/f/xljrnpwr" method="POST">
+
+      <div class="field-grid">
+        <div class="field field--full">
+          <label for="update-vendor-name">Vendor name</label>
+          <input id="update-vendor-name" name="Vendor name" type="text" placeholder="e.g. Big Red Rolloffs" required>
+        </div>
+
+        <div class="field field--full">
+          <span class="field-label-static">What's being updated</span>
+          <div class="checkbox-group">
+            <label class="checkbox-option">
+              <input type="checkbox" name="What's being updated" value="Pricing">
+              Pricing
+            </label>
+            <label class="checkbox-option">
+              <input type="checkbox" name="What's being updated" value="Service area">
+              Service area
+            </label>
+            <label class="checkbox-option">
+              <input type="checkbox" name="What's being updated" value="Other">
+              Other
+            </label>
+          </div>
+        </div>
+
+        <div class="field field--full">
+          <label for="update-notes">Notes</label>
+          <textarea id="update-notes" name="Notes" rows="4" placeholder="Describe the change — e.g. new price is $410, dropped Tuesday debris pickup, etc." required></textarea>
+        </div>
+      </div>
+
+      <input type="text" name="_gotcha" style="display:none" tabindex="-1" autocomplete="off">
+      <input type="hidden" name="_subject" value="New Vendor Update request">
+
+      <p class="form-error" data-form-error hidden>Something went wrong sending this — check your connection and try again in a moment.</p>
+
+      <button class="btn" type="submit">Send request →</button>
+    </form>
+  </div>
+
+</div>
+
+<script type="module" src="js/vendor-request.js"></script>
+</body>
+</html>

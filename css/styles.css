@@ -22,6 +22,10 @@
   --steel-soft: rgba(91, 138, 172, 0.14);
   --steel-text: #9dc3dd;
 
+  --sage: #74a86b;
+  --sage-soft: rgba(116, 168, 107, 0.14);
+  --sage-text: #a8cf9e;
+
   --caution: #e0a44a;
   --caution-soft: rgba(224, 164, 74, 0.14);
 
@@ -43,6 +47,13 @@ body.role-admin {
   --role: var(--steel);
   --role-soft: var(--steel-soft);
   --role-text: var(--steel-text);
+}
+/* Add/Update Vendor pages are shared by both teams, so they get their
+   own accent rather than borrowing Sales' amber or Admin's steel. */
+body.role-vendor {
+  --role: var(--sage);
+  --role-soft: var(--sage-soft);
+  --role-text: var(--sage-text);
 }
 
 * { box-sizing: border-box; }
@@ -210,6 +221,24 @@ button, input, select {
   background: var(--role-soft);
 }
 
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.ghost-link {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 5px 12px;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+.ghost-link:hover { color: var(--text); border-color: var(--role); }
+
 .page-title {
   font-size: clamp(1.7rem, 4vw, 2.3rem);
   margin: 28px 0 4px;
@@ -235,11 +264,14 @@ button, input, select {
   gap: 16px;
 }
 
+.field--full { grid-column: 1 / -1; }
+
 @media (max-width: 560px) {
   .field-grid { grid-template-columns: 1fr; }
 }
 
-.field label {
+.field label,
+.field-label-static {
   display: block;
   font-size: 0.88rem;
   color: var(--text-muted);
@@ -247,20 +279,78 @@ button, input, select {
 }
 
 .field input,
-.field select {
+.field select,
+.field textarea {
   width: 100%;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: 10px 12px;
   color: var(--text);
+  font-family: inherit;
 }
 
-.field input::placeholder { color: var(--text-muted); opacity: 0.75; }
+.field textarea {
+  resize: vertical;
+  min-height: 90px;
+}
+
+.field input::placeholder,
+.field textarea::placeholder { color: var(--text-muted); opacity: 0.75; }
 
 .field input:focus,
-.field select:focus {
+.field select:focus,
+.field textarea:focus {
   border-color: var(--role);
+}
+
+/* ---------- Checkbox groups (Update Vendor) ---------- */
+
+.checkbox-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 22px;
+}
+
+.checkbox-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+
+.checkbox-option input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--role);
+  cursor: pointer;
+}
+
+/* ---------- Vendor-request form states ---------- */
+
+.form-error {
+  color: var(--caution);
+  font-size: 0.88rem;
+  margin: 14px 0 0;
+}
+
+.form-success {
+  text-align: center;
+  padding: 24px 8px 8px;
+}
+
+.form-success__title {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.3rem;
+  color: var(--role-text);
+  margin-bottom: 8px;
+}
+
+.form-success p {
+  color: var(--text-muted);
+  margin: 0 0 20px;
 }
 
 .btn {
