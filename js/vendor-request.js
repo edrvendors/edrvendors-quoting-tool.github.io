@@ -7,6 +7,15 @@
 const form = document.querySelector('form[data-vendor-form]');
 
 if (form) {
+  // Linked from Sales' "no vendor for this area" prompt as
+  // add-vendor.html?area=City,%20ST — prefill the Notes field so whoever
+  // fills this out doesn't have to retype the location.
+  const areaParam = new URLSearchParams(location.search).get('area');
+  const notesEl = form.querySelector('textarea[name="Notes"]');
+  if (areaParam && notesEl && !notesEl.value) {
+    notesEl.value = `Area needed: ${areaParam}\n`;
+  }
+
   const panel = form.closest('.panel');
   const submitBtn = form.querySelector('button[type="submit"]');
   const errorEl = form.querySelector('[data-form-error]');

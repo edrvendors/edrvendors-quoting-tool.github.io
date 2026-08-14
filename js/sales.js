@@ -86,6 +86,53 @@ function renderCard(row, price) {
   return card;
 }
 
+function estimateDetailLine(est) {
+  const parts = [`Includes ${est.tons} ton${est.tons === 1 ? '' : 's'}`, `${est.rentalDays} day rental`];
+  return parts.join(' · ');
+}
+
+function estimateOverageLine(est) {
+  const parts = [];
+  if (est.tonOverage != null) parts.push(`Extra ton: ${money(est.tonOverage)}`);
+  if (est.dayOverage != null) parts.push(`Extra day: ${money(est.dayOverage)}`);
+  return parts.join(' &nbsp;&nbsp; ');
+}
+
+function renderEstimateCard(est) {
+  const card = document.createElement('div');
+  card.className = 'result-card result-card--estimate';
+  const overage = estimateOverageLine(est);
+
+  card.innerHTML = `
+    <div class="result-top">
+      <div>
+        <div class="result-size">${est.size} yd</div>
+        <div class="result-vendor result-vendor--estimate">Estimated price</div>
+      </div>
+      <div class="result-total">${money(est.total)}</div>
+    </div>
+    <div class="result-detail-row">${estimateDetailLine(est)}</div>
+    ${overage ? `<div class="result-detail-row">${overage}</div>` : ''}
+  `;
+  return card;
+}
+
+function renderAddVendorPrompt(context = {}) {
+  const wrap = document.createElement('div');
+  wrap.className = 'add-vendor-prompt';
+  const area = [context.city, context.state].filter(Boolean).join(', ')
+    || (context.zip ? `zip ${context.zip}` : 'this area');
+  const params = new URLSearchParams();
+  if (area && area !== 'this area') params.set('area', area);
+  const href = `add-vendor.html${params.toString() ? '?' + params.toString() : ''}`;
+
+  wrap.innerHTML = `
+    <p>Know a vendor that services ${area}?</p>
+    <a class="btn" href="${href}">Add a vendor →</a>
+  `;
+  return wrap;
+}
+
 function render(data) {
   resultsEl.innerHTML = '';
 
@@ -101,16 +148,20 @@ function render(data) {
     resultsEl.appendChild(noteEl);
   }
 
-  if (!data.results.length) {
-    resultsEl.innerHTML += `<div class="empty-state">No vendors found for that area yet in the sample data.</div>`;
+  if (data.tier === 'suggested') {
+    const noteEl = document.createElement('div');
+    noteEl.className = 'match-tier';
+    noteEl.innerHTML = `<span class="badge">Estimated</span> No confirmed vendor for this area — here's a price to work with.`;
+    resultsEl.appendChild(noteEl);
+    data.suggested.forEach(est => resultsEl.appendChild(renderEstimateCard(est)));
+    resultsEl.appendChild(renderAddVendorPrompt(data.addVendorContext));
     return;
   }
 
-  if (data.tier !== 'city') {
-    const noteEl = document.createElement('div');
-    noteEl.className = 'match-tier';
-    noteEl.textContent = 'No exact match for that city — showing the closest vendors available in the area.';
-    resultsEl.appendChild(noteEl);
+  if (!data.results.length) {
+    resultsEl.innerHTML += `<div class="empty-state">No vendors found for that area yet, and not enough data on file to estimate a price.</div>`;
+    if (data.addVendorPrompt) resultsEl.appendChild(renderAddVendorPrompt(data.addVendorContext));
+    return;
   }
 
   data.results.forEach(({ row, price }) => resultsEl.appendChild(renderCard(row, price)));

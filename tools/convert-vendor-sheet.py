@@ -9,6 +9,16 @@ column). Column layout expected:
     State, City, Vendor, Phone, Pricing Model, Delivery, Haul Rate, Per Ton,
     Fuel Surcharge, 10 YD, 15 YD, 20 YD, 30 YD, 40 YD, Other, Other2
 
+Two columns are read if present, but are optional and safely skipped if
+missing (the filler sheet has neither) — both feed the sales-side
+"suggested price" estimate for areas with no vendor on file:
+  - "Zip" — vendor's zip code. Powers exact zip-match lookups once filled
+    in on the real sheet; until then this is just None for every row.
+  - "Sales Tax Rate" — this state's rate. Assumed to be a decimal fraction
+    (0.07 for 7%); a value greater than 1 is treated as a whole-number
+    percent and divided by 100. Worth double-checking against the real
+    column's actual format once it's added to the Master Sheet.
+
 Rules applied (confirmed with Dee):
   - An empty size column means the vendor does not offer that size at all.
   - Haul + Disposal size cells hold ONLY a rental-period string ("7 Days") —
@@ -46,6 +56,29 @@ BARE_NUM_RE = re.compile(r'^([\d.]+)$')
 
 def clean(v):
     return None if pd.isna(v) else v
+
+
+def clean_zip(v):
+    """Handles zips read as either text ('34769') or a number (34769.0,
+    which loses any leading zero) — returns a plain 5-digit string, or
+    None if the cell is blank. Doesn't attempt to fix zips already stored
+    wrong on the sheet (e.g. 4-digit) — leaves those as-is rather than guess."""
+    if pd.isna(v):
+        return None
+    if isinstance(v, float):
+        v = int(v)
+    s = str(v).strip()
+    return s.zfill(5) if s.isdigit() and len(s) <= 5 else s
+
+
+def clean_tax_rate(v):
+    """Assumes a decimal fraction (0.07); a value over 1 is treated as a
+    whole-number percent (7 -> 0.07). Confirm this matches the real
+    column's format once Sales Tax Rate is added to the Master Sheet."""
+    if pd.isna(v):
+        return None
+    v = float(v)
+    return v / 100 if v > 1 else v
 
 
 def parse_size_cell(raw, pricing_model_norm):
@@ -110,6 +143,8 @@ def convert(xlsx_path):
         fuel = clean(row.get('Fuel Surcharge')) or 0
         vendor = clean(row.get('Vendor')) or 'Unnamed vendor'
         phone = clean(row.get('Phone'))
+        zip_code = clean_zip(row.get('Zip'))
+        tax_rate = clean_tax_rate(row.get('Sales Tax Rate'))
 
         for col in SIZE_COLUMNS:
             raw_val = row.get(col)
@@ -127,6 +162,8 @@ def convert(xlsx_path):
                 'phone': phone,
                 'city': clean(row.get('City')),
                 'state': clean(row.get('State')),
+                'zip': zip_code,
+                'taxRate': tax_rate,
                 'size': size,
                 'pricingModel': model,
                 'delivery': delivery,
@@ -177,11 +214,6 @@ export const DEBRIS_TYPES = [
 // NOTE: this filler sheet has no debris-type column, so every vendor below
 // is treated as handling all debris types for now. The dropdown is wired
 // up and ready for when the real sheet has per-vendor debris data.
-
-/* No zip column in this filler sheet yet, so this stays empty — zip
-   search will fall back to the regional estimate until real zip data
-   exists (Dee confirmed many vendors already have zips on the real sheet). */
-export const ZIP_TO_LOCATION = {};
 
 export const MARGIN_DIVISOR = 0.74;
 
