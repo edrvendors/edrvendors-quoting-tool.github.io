@@ -22,12 +22,12 @@
   --steel-soft: rgba(91, 138, 172, 0.14);
   --steel-text: #9dc3dd;
 
-  --sage: #74a86b;
-  --sage-soft: rgba(116, 168, 107, 0.14);
-  --sage-text: #a8cf9e;
-
   --caution: #e0a44a;
   --caution-soft: rgba(224, 164, 74, 0.14);
+
+  --alert: #e2645c;
+  --alert-soft: rgba(226, 100, 92, 0.14);
+  --alert-text: #f3a29c;
 
   --radius: 10px;
   --radius-sm: 6px;
@@ -47,13 +47,6 @@ body.role-admin {
   --role: var(--steel);
   --role-soft: var(--steel-soft);
   --role-text: var(--steel-text);
-}
-/* Add/Update Vendor pages are shared by both teams, so they get their
-   own accent rather than borrowing Sales' amber or Admin's steel. */
-body.role-vendor {
-  --role: var(--sage);
-  --role-soft: var(--sage-soft);
-  --role-text: var(--sage-text);
 }
 
 * { box-sizing: border-box; }
@@ -221,27 +214,6 @@ button, input, select {
   background: var(--role-soft);
 }
 
-.topbar-actions {
-  display: flex;
-  align-items: center;
-  gap: 20px;
-  flex-wrap: wrap;
-}
-
-.topbar-btn {
-  display: inline-flex;
-  align-items: center;
-  background: var(--role);
-  color: #15181c;
-  font-weight: 700;
-  font-size: 0.82rem;
-  border: none;
-  border-radius: var(--radius-sm);
-  padding: 9px 16px;
-  transition: filter 0.15s ease;
-}
-.topbar-btn:hover { filter: brightness(1.08); }
-
 .page-title {
   font-size: clamp(1.7rem, 4vw, 2.3rem);
   margin: 28px 0 4px;
@@ -267,14 +239,11 @@ button, input, select {
   gap: 16px;
 }
 
-.field--full { grid-column: 1 / -1; }
-
 @media (max-width: 560px) {
   .field-grid { grid-template-columns: 1fr; }
 }
 
-.field label,
-.field-label-static {
+.field label {
   display: block;
   font-size: 0.88rem;
   color: var(--text-muted);
@@ -282,78 +251,20 @@ button, input, select {
 }
 
 .field input,
-.field select,
-.field textarea {
+.field select {
   width: 100%;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: 10px 12px;
   color: var(--text);
-  font-family: inherit;
 }
 
-.field textarea {
-  resize: vertical;
-  min-height: 90px;
-}
-
-.field input::placeholder,
-.field textarea::placeholder { color: var(--text-muted); opacity: 0.75; }
+.field input::placeholder { color: var(--text-muted); opacity: 0.75; }
 
 .field input:focus,
-.field select:focus,
-.field textarea:focus {
+.field select:focus {
   border-color: var(--role);
-}
-
-/* ---------- Checkbox groups (Update Vendor) ---------- */
-
-.checkbox-group {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px 22px;
-}
-
-.checkbox-option {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 0.95rem;
-  cursor: pointer;
-}
-
-.checkbox-option input[type="checkbox"] {
-  width: 16px;
-  height: 16px;
-  accent-color: var(--role);
-  cursor: pointer;
-}
-
-/* ---------- Vendor-request form states ---------- */
-
-.form-error {
-  color: var(--caution);
-  font-size: 0.88rem;
-  margin: 14px 0 0;
-}
-
-.form-success {
-  text-align: center;
-  padding: 24px 8px 8px;
-}
-
-.form-success__title {
-  font-family: var(--font-display);
-  font-weight: 700;
-  font-size: 1.3rem;
-  color: var(--role-text);
-  margin-bottom: 8px;
-}
-
-.form-success p {
-  color: var(--text-muted);
-  margin: 0 0 20px;
 }
 
 .btn {
@@ -413,6 +324,39 @@ button, input, select {
   color: var(--caution);
   background: var(--caution-soft);
 }
+
+.notice-banner {
+  border-radius: var(--radius);
+  padding: 16px 20px;
+  margin-bottom: 14px;
+  font-size: 0.98rem;
+  font-weight: 600;
+  line-height: 1.45;
+}
+
+.notice-banner__label {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin-bottom: 6px;
+}
+
+.notice-banner--must-call {
+  border: 1px solid var(--caution);
+  background: var(--caution-soft);
+  color: var(--text);
+}
+.notice-banner--must-call .notice-banner__label { color: var(--caution); }
+
+.notice-banner--franchised {
+  border: 1px solid var(--alert);
+  background: var(--alert-soft);
+  color: var(--text);
+}
+.notice-banner--franchised .notice-banner__label { color: var(--alert-text); }
 
 .result-card {
   background: var(--surface);
@@ -562,38 +506,19 @@ button, input, select {
 
 .admin-detail b { color: var(--text); font-weight: 500; }
 
-/* ---------- Suggested price (no-coverage estimate) ---------- */
-
-.result-card--estimate {
-  border-style: dashed;
-  border-color: var(--caution);
+.badge--alert {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--alert);
+  color: var(--alert-text);
+  background: var(--alert-soft);
 }
-
-.result-vendor--estimate {
-  font-style: italic;
-  color: var(--text-muted);
-}
-
-.add-vendor-prompt {
-  margin-top: 8px;
-  margin-bottom: 12px;
-  padding: 16px 20px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  flex-wrap: wrap;
-}
-
-.add-vendor-prompt p {
-  margin: 0;
-  color: var(--text-muted);
-}
-
-.add-vendor-prompt .btn { margin-top: 0; }
 
 .note {
   margin-top: 40px;

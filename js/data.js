@@ -20,6 +20,11 @@ export const DEBRIS_TYPES = [
 // is treated as handling all debris types for now. The dropdown is wired
 // up and ready for when the real sheet has per-vendor debris data.
 
+/* No zip column in this filler sheet yet, so this stays empty — zip
+   search will fall back to the regional estimate until real zip data
+   exists (Dee confirmed many vendors already have zips on the real sheet). */
+export const ZIP_TO_LOCATION = {};
+
 export const MARGIN_DIVISOR = 0.74;
 
 export const PRICING_RULES = [

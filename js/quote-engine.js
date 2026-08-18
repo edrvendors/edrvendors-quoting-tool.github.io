@@ -8,75 +8,93 @@
      would allow more. That gap is unbilled overage headroom, not shown.
    - Rental period shown is whatever the vendor's data actually says —
      there's no equivalent fixed convention for days.
-   - Markup order: (base price + vendor's delivery/fuel fees) -> tax ->
-     ÷0.74 (COGS), in that order, COGS last.
-   - Overage rates (per-ton, per-day) get tax + ÷0.74 too, but NOT the
-     delivery/fuel fees (those are one-time container fees, not per-unit).
+   - Markup order: (base price + vendor's delivery/fuel fees + 3.5% credit
+     card processing fee on that subtotal) -> tax -> ÷0.74 (COGS), in that
+     order, COGS last. The card fee applies no matter the pricing model or
+     debris type — every dollar billed by a vendor gets it.
+   - Overage rates (per-ton, per-day) get the same tax + card-fee + ÷0.74
+     treatment as the base price, but NOT the delivery/fuel fees (those
+     are one-time container fees, not per-unit).
    - Haul + Disposal is the one model where a rep can flex tonnage; the
      price recalculates live from the same per-ton rate used for overage.
    - No cost/tax/margin breakdown is ever shown to a sales rep — just the
      final numbers.
-
-   Suggested price (no-coverage estimate), confirmed with Dee:
-   - "Covered" means a real vendor is on file at the entered zip or city.
-     If covered: requested size on file -> show it (real price). Requested
-     size NOT on file -> show a disclaimer plus real pricing for whatever
-     sizes that vendor DOES offer. Never an estimate in either case.
-   - "Not covered" means zip AND city both come up with zero vendors on
-     file, regardless of size. That's when the state-average estimate
-     kicks in — irrespective of which size was asked for.
-   - There's no more "show some real vendor from a random city elsewhere
-     in the state" tier — a state-wide vendor with no connection to the
-     requested area was replaced by the estimate.
-   - The estimate is a straight average of Standard-model vendors in the
-     same state, computed separately per size tier (10/20/30/40 YD — no
-     estimate for 15 YD, since there's no standard-tons convention for it).
-   - Base price, ton-overage rate, and day-overage rate are each averaged,
-     then bumped 15% ("aim high" — Dee would rather overquote slightly than
-     risk a loss), then get the same tax + ÷0.74 COGS treatment as a real
-     quote. No vendor delivery/fuel fees are added — there's no vendor to
-     attach them to.
-   - Rental period is a flat 7 Days for every estimate (Dee's call — unlike
-     tonnage, rental days have no per-size convention to average against).
-   - Tax uses the highest listed rate among that state's vendors. No
-     taxRate column exists yet, so this quietly falls back to the same
-     TAX_RATE placeholder every other quote uses until it's wired in.
-   - Sales sees a single number and no breakdown — same as a real quote —
-     but the result is visually flagged as an estimate.
-   - Never shown in Admin search — searchAdmin() doesn't call any of this.
+   - Three pricing models never produce a price: "must_call_for_pricing"
+     (vendor exists but needs a direct call — treated like "no priced
+     vendor" for match-tier purposes, but still surfaced boldly since a
+     real vendor contact is worth knowing), "franchised" (the city can't
+     be serviced at all — bold "can't help" notice), and
+     "do_not_price_quote" (a blacklisted vendor — hidden from sales
+     entirely, visible to admin only as a warning).
    ========================================================= */
 
 import {
-  PRICING_RULES, STANDARD_TONS_BY_SIZE,
+  PRICING_RULES, ZIP_TO_LOCATION, STANDARD_TONS_BY_SIZE,
   MARGIN_DIVISOR,
 } from './data.js';
 
-const TIER_LABEL = {
-  zip: 'Exact match',
-  city: 'City match',
-  suggested: 'Estimated price — no vendor on file',
-};
+const TIER_LABEL = { city: 'City match', state: 'State match', regional: 'Regional estimate' };
 const TAX_RATE = 0; // placeholder — this filler sheet has no tax column yet
+const CC_FEE_RATE = 0.035; // credit card processing fee — applied to every dollar billed by a vendor
 
-const STANDARD_SIZES = [10, 20, 30, 40]; // sizes the suggested-price estimate covers
-const SUGGESTED_MARGIN = 1.15;           // 15% above the straight state average
-const SUGGESTED_RENTAL_DAYS = 7;         // flat base, confirmed with Dee
+const PRICEABLE_MODELS = new Set(['standard', 'flat', 'haul_plus_disposal']);
+// Shown as a bold notice on sales results when they occur in the exact
+// searched city. "do_not_price_quote" is deliberately NOT in this set —
+// sales never sees it at all, only admin does.
+const NOTICE_MODELS = new Set(['must_call_for_pricing', 'franchised']);
+
+export function resolveZip(raw) {
+  const zip = (raw || '').trim();
+  if (!/^\d{5}$/.test(zip)) return null;
+  return ZIP_TO_LOCATION[zip] || null;
+}
+
+/** city -> state -> regional, counting ONLY priceable rows toward a match —
+ *  a city with nothing but a "must call" or "franchised" row is treated
+ *  the same as a city with no vendor at all, for fallback purposes. No
+ *  county tier — the real sheet has no county data, so that tier from the
+ *  earlier mock is dropped for now. */
+function resolveTier(priceableRows, { city, state }) {
+  if (city) {
+    const cityRows = state
+      ? priceableRows.filter(r => r.city?.toLowerCase() === city.toLowerCase() && r.state === state)
+      : priceableRows.filter(r => r.city?.toLowerCase() === city.toLowerCase());
+    if (cityRows.length) return { tier: 'city', rows: cityRows };
+  }
+  if (state) {
+    const stateRows = priceableRows.filter(r => r.state === state);
+    if (stateRows.length) return { tier: 'state', rows: stateRows };
+  }
+  return { tier: 'regional', rows: [] }; // no real "regional" pool without a state to anchor to
+}
 
 function includedTons(row) {
   if (row.pricingModel === 'flat') return null;
   return STANDARD_TONS_BY_SIZE[row.size] ?? row.rawTons ?? null;
 }
 
-function markup(amount, { withFees = 0, taxRate = TAX_RATE } = {}) {
-  if (amount == null) return null;
-  const afterFees = amount + withFees;
-  const afterTax = afterFees * (1 + taxRate);
+function markup(amount, { withFees = 0 } = {}) {
+  const subtotal = amount + withFees;
+  const ccFee = subtotal * CC_FEE_RATE;
+  const afterCcFee = subtotal + ccFee;
+  const afterTax = afterCcFee * (1 + TAX_RATE);
   return afterTax / MARGIN_DIVISOR;
 }
 
 /** Computes the full customer-facing quote for one pricing rule.
- *  overrideTons lets the haul+disposal adjuster recalculate live. */
+ *  overrideTons lets the haul+disposal adjuster recalculate live.
+ *  Returns { noticeModel } instead of a price for the three models that
+ *  don't have a real quote to compute. */
 export function priceRule(row, overrideTons = null) {
+  if (!PRICEABLE_MODELS.has(row.pricingModel)) {
+    return {
+      tons: null, rentalDays: null, total: null,
+      tonOverage: null, dayOverage: null,
+      isFlat: false, isHaulPlusDisposal: false,
+      noticeModel: row.pricingModel,
+    };
+  }
+
   const fees = (row.delivery || 0) + (row.fuelSurcharge || 0);
   const tons = row.pricingModel === 'haul_plus_disposal'
     ? (overrideTons ?? STANDARD_TONS_BY_SIZE[row.size] ?? 1)
@@ -92,8 +110,8 @@ export function priceRule(row, overrideTons = null) {
   const total = markup(basePrice, { withFees: fees });
 
   const tonOverageRaw = row.pricingModel === 'haul_plus_disposal' ? row.perTon : row.tonOverageRate;
-  const tonOverage = markup(tonOverageRaw);
-  const dayOverage = markup(row.dayOverageRate);
+  const tonOverage = tonOverageRaw != null ? markup(tonOverageRaw) : null;
+  const dayOverage = row.dayOverageRate != null ? markup(row.dayOverageRate) : null;
 
   return {
     tons,
@@ -113,83 +131,8 @@ function debrisMatches() {
   return true;
 }
 
-function bySize(rows, size) {
-  if (!size || size === 'any') return rows.filter(debrisMatches);
-  return rows.filter(r => String(r.size) === String(size)).filter(debrisMatches);
-}
-
-function average(nums) {
-  const vals = nums.filter(n => n != null && !Number.isNaN(n));
-  if (!vals.length) return null;
-  return vals.reduce((a, b) => a + b, 0) / vals.length;
-}
-
-/** Highest listed tax rate among a state's vendors. No taxRate column
- *  exists yet, so this quietly falls back to the same TAX_RATE placeholder
- *  every other quote uses — nothing else needs to change once the Sales
- *  Tax Rate column is wired in from the Master Sheet. */
-function stateMaxTaxRate(state) {
-  const rates = PRICING_RULES
-    .filter(r => r.state === state && r.taxRate != null)
-    .map(r => r.taxRate);
-  return rates.length ? Math.max(...rates) : TAX_RATE;
-}
-
-/** State-average estimate, one entry per standard size tier (or just the
- *  requested one). Only draws from Standard-model rows — Flat and
- *  Haul+Disposal don't price the same way, so they're never blended in. */
-function buildSuggestedPrices(state, requestedSize) {
-  const requestedNum = Number(requestedSize);
-  const sizesToTry = (requestedSize && requestedSize !== 'any')
-    ? (STANDARD_SIZES.includes(requestedNum) ? [requestedNum] : [])
-    : STANDARD_SIZES;
-
-  const taxRate = stateMaxTaxRate(state);
-  const out = [];
-
-  for (const size of sizesToTry) {
-    const pool = PRICING_RULES.filter(r =>
-      r.state === state && r.pricingModel === 'standard' && r.size === size);
-
-    const avgPrice = average(pool.map(r => r.price));
-    if (avgPrice == null) continue; // no Standard data for this tier in this state
-
-    const avgTonOverage = average(pool.map(r => r.tonOverageRate));
-    const avgDayOverage = average(pool.map(r => r.dayOverageRate));
-    const boosted = (n) => n == null ? null : markup(n * SUGGESTED_MARGIN, { taxRate });
-
-    out.push({
-      size,
-      tons: STANDARD_TONS_BY_SIZE[size] ?? null,
-      rentalDays: SUGGESTED_RENTAL_DAYS,
-      total: boosted(avgPrice),
-      tonOverage: boosted(avgTonOverage),
-      dayOverage: boosted(avgDayOverage),
-    });
-  }
-  return out;
-}
-
-/** Finds any real vendor rows on file at the entered zip or city, in that
- *  order, regardless of size — this determines whether the location is
- *  "covered" at all. Returns null if neither has any vendor on file. */
-function findCoveredLocation(zipEntered, cityState) {
-  if (/^\d{5}$/.test(zipEntered)) {
-    const rows = PRICING_RULES.filter(r => r.zip === zipEntered);
-    if (rows.length) return { tier: 'zip', rows };
-  }
-  if (cityState.city) {
-    const rows = cityState.state
-      ? PRICING_RULES.filter(r => r.city?.toLowerCase() === cityState.city.toLowerCase() && r.state === cityState.state)
-      : PRICING_RULES.filter(r => r.city?.toLowerCase() === cityState.city.toLowerCase());
-    if (rows.length) return { tier: 'city', rows };
-  }
-  return null;
-}
-
 /** Admin search — direct substring/exact match on city, state, and/or
- *  vendor name. No location fallback and no suggested-price estimate —
- *  that's a sales-flow-only concept and never appears here. */
+ *  vendor name, no location fallback logic (that's a sales-flow concept). */
 export function searchAdmin({ cityRaw, stateRaw, vendorRaw }) {
   const city = (cityRaw || '').trim().toLowerCase();
   const state = (stateRaw || '').trim().toUpperCase();
@@ -205,57 +148,53 @@ export function searchAdmin({ cityRaw, stateRaw, vendorRaw }) {
 /** filters = { zipRaw, cityRaw, stateRaw, size, debrisId } */
 export function getQuotes(filters) {
   const zipEntered = (filters.zipRaw || '').trim();
-  const cityState = {
-    city: (filters.cityRaw || '').trim(),
-    state: (filters.stateRaw || '').trim().toUpperCase(),
-  };
-  const hasLocation = !!(cityState.city || cityState.state || zipEntered);
+  const cityState = { city: (filters.cityRaw || '').trim(), state: (filters.stateRaw || '').trim().toUpperCase() };
+  const hasCityState = !!(cityState.city || cityState.state);
 
-  const empty = {
-    hasLocation, tier: null, tierLabel: '', note: '',
-    sizeUnavailable: false, results: [], suggested: [],
-    addVendorPrompt: false, addVendorContext: null,
-  };
+  let location = cityState;
+  let note = '';
 
-  if (!hasLocation) return empty;
-
-  const asResults = rows => rows.map(row => ({ row, price: priceRule(row) }));
-  const covered = findCoveredLocation(zipEntered, cityState);
-
-  if (covered) {
-    // A real vendor is on file here. If they offer the requested size,
-    // show it. If not, say so plainly and show what they DO offer —
-    // never an estimate once a real vendor is already on file locally.
-    const sizeMatched = bySize(covered.rows, filters.size);
-    if (sizeMatched.length) {
-      return { ...empty, tier: covered.tier, tierLabel: TIER_LABEL[covered.tier], results: asResults(sizeMatched) };
+  if (!hasCityState && zipEntered) {
+    const resolved = resolveZip(zipEntered);
+    if (resolved) {
+      location = resolved;
+    } else {
+      note = `Zip ${zipEntered} isn\u2019t in this sample data yet \u2014 try a city and state instead.`;
     }
-    const anySize = covered.rows.filter(debrisMatches);
-    const sample = covered.rows[0];
-    const areaLabel = sample ? `${sample.city}, ${sample.state}` : [cityState.city, cityState.state].filter(Boolean).join(', ');
-    return {
-      ...empty,
-      tier: covered.tier,
-      tierLabel: TIER_LABEL[covered.tier],
-      sizeUnavailable: true,
-      note: `${filters.size} yd isn\u2019t available from vendors on file in ${areaLabel} \u2014 here\u2019s what they do offer instead:`,
-      results: asResults(anySize),
-    };
   }
 
-  // Neither zip nor city has a vendor on file — the location itself isn't
-  // covered. Pull the state-average estimate, regardless of requested size.
-  const state = cityState.state;
-  const suggested = state ? buildSuggestedPrices(state, filters.size) : [];
+  const hasLocation = hasCityState || !!zipEntered;
+  if (!hasLocation) {
+    return { hasLocation: false, tier: null, tierLabel: '', results: [], note: '', cityNotices: [] };
+  }
+
+  // Must-call / franchised notices for the EXACT searched city — shown
+  // regardless of whether a priced vendor also exists there, and never
+  // subject to the state/regional fallback (they're tied to that one city).
+  const cityNotices = (location.city && location.state)
+    ? PRICING_RULES.filter(r =>
+        r.city?.toLowerCase() === location.city.toLowerCase() &&
+        r.state === location.state &&
+        NOTICE_MODELS.has(r.pricingModel))
+    : [];
+
+  const priceableRows = PRICING_RULES.filter(r => PRICEABLE_MODELS.has(r.pricingModel));
+  const match = resolveTier(priceableRows, location);
+  let rows = match.rows;
+  if (filters.size && filters.size !== 'any') {
+    rows = rows.filter(r => String(r.size) === String(filters.size));
+  }
+  rows = rows.filter(debrisMatches);
+
+  const results = rows.map(row => ({ row, price: priceRule(row) }));
 
   return {
-    ...empty,
-    tier: suggested.length ? 'suggested' : null,
-    tierLabel: suggested.length ? TIER_LABEL.suggested : '',
-    note: state ? '' : 'Add a state (or a matching zip/city) to check coverage for this area.',
-    suggested,
-    addVendorPrompt: true,
-    addVendorContext: { city: cityState.city, state, zip: zipEntered },
+    hasLocation: true,
+    tier: match.tier,
+    tierLabel: TIER_LABEL[match.tier],
+    note,
+    results,
+    cityNotices,
   };
 }
 
