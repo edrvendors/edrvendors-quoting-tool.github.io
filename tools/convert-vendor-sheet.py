@@ -80,6 +80,7 @@ STATE_TO_ABBR = {
 
 PAREN_SIZE_RE = re.compile(r'\(\s*(\d+)\s*Y\s*D?\s*\)')
 BARE_SIZE_PREFIX_RE = re.compile(r'^\s*(\d+)\s*YD?\s*[/:\-]\s*', re.IGNORECASE)
+ZONE_PREFIX_RE = re.compile(r'^\s*zone\s*\d+\s*', re.IGNORECASE)
 PRICE_RE = re.compile(
     r'^\$?\s*([\d,]+(?:\.\d+)?)\s*(?:/\s*(flat|[\d.]+\s*T))?\s*(?:/\s*\$?\s*(\d+)\s*Days?)?',
     re.IGNORECASE,
@@ -157,21 +158,24 @@ def normalize_pricing_model(raw):
 
 def strip_size_note(raw):
     """Pulls a real-size note out of a cell, whichever format it's in --
-    '(12YD)', '12YD-', '12 YD:', '12YD/' -- returns (remaining_text, note)."""
-    s = str(raw)
+    '(12YD)', '12YD-', '12 YD:', '12YD/' -- returns (remaining_text, note).
+    Also strips a leading 'Zone N' service-area label some vendors use,
+    which isn't a real-size note but breaks price parsing the same way if
+    left in (the raw cell text is preserved separately either way)."""
+    s = ZONE_PREFIX_RE.sub('', str(raw))
     m = PAREN_SIZE_RE.search(s)
     if m:
         return PAREN_SIZE_RE.sub('', s).strip(), f'{m.group(1)}YD'
     m = BARE_SIZE_PREFIX_RE.match(s)
     if m:
         return BARE_SIZE_PREFIX_RE.sub('', s).strip(), f'{m.group(1)}YD'
-    return s, None
+    return s.strip(), None
 
 
 def parse_standard_or_flat_cell(raw):
     """Returns dict with price/rawTons/days/isFlatCell, or None if unparseable."""
     cleaned, note = strip_size_note(raw)
-    m = PRICE_RE.match(cleaned)
+    m = PRICE_RE.match(cleaned.strip())
     if not m:
         return None
     price = float(m.group(1).replace(',', ''))
