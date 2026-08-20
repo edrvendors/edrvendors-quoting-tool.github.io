@@ -527,3 +527,39 @@ button, input, select {
   color: var(--text-muted);
   font-size: 0.88rem;
 }
+
+/* Debris-variant grouping — one vendor+size card, multiple labeled prices
+   (e.g. CnD vs Mixed) when the rep hasn't picked a debris type. */
+.badge--debris {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+}
+
+.variant-note {
+  margin-top: 8px;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.variant-wrap {
+  margin-top: 10px;
+}
+
+.price-block {
+  padding: 12px 0;
+  border-top: 1px solid var(--border-soft);
+}
+
+.price-block__top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}

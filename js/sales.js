@@ -1,6 +1,8 @@
 import { DEBRIS_TYPES } from './data.js';
 import { getQuotes, priceRule, money } from './quote-engine.js';
 
+const DEBRIS_NAME = Object.fromEntries(DEBRIS_TYPES.map(d => [d.id, d.name]));
+
 const debrisSelect = document.getElementById('debris');
 DEBRIS_TYPES.forEach(d => {
   const opt = document.createElement('option');
@@ -10,7 +12,6 @@ DEBRIS_TYPES.forEach(d => {
 });
 
 const resultsEl = document.getElementById('results');
-let lastLocation = { city: '', state: '' };
 
 function currentFilters() {
   return {
@@ -36,22 +37,28 @@ function overageLine(price) {
   return parts.join(' &nbsp;&nbsp; ');
 }
 
-function renderCard(row, price) {
-  const card = document.createElement('div');
-  card.className = 'result-card';
+function debrisBadge(debrisType) {
+  if (!debrisType) return '';
+  const name = DEBRIS_NAME[debrisType] || debrisType;
+  return `<span class="badge badge--debris">${name}</span>`;
+}
 
-  const cityNote = row.city ? `<div class="result-city-note">${row.city}, ${row.state}</div>` : '';
+/** Renders one priced line — a full single-vendor card body, or one
+ *  variant's slice within a grouped multi-debris card. */
+function buildPriceBlock(row, price, { withTotalHeader }) {
+  const el = document.createElement('div');
+  el.className = 'price-block';
   const overage = overageLine(price);
 
-  card.innerHTML = `
-    <div class="result-top">
-      <div>
-        <div class="result-size">${row.size} yd</div>
-        <div class="result-vendor">${row.vendor}${row.phone ? ' · ' + row.phone : ''}</div>
-        ${cityNote}
-      </div>
+  const totalHeader = withTotalHeader ? `
+    <div class="price-block__top">
+      ${debrisBadge(row.debrisType)}
       <div class="result-total" data-total>${money(price.total)}</div>
     </div>
+  ` : '';
+
+  el.innerHTML = `
+    ${totalHeader}
     <div class="result-detail-row" data-detail>${detailLine(row, price)}</div>
     ${overage ? `<div class="result-detail-row">${overage}</div>` : ''}
     ${price.isHaulPlusDisposal ? `
@@ -68,21 +75,93 @@ function renderCard(row, price) {
 
   if (price.isHaulPlusDisposal) {
     let tons = price.tons;
-    const totalEl = card.querySelector('[data-total]');
-    const detailEl = card.querySelector('[data-detail]');
-    const tonsDisplayEl = card.querySelector('[data-tons-display]');
-    card.querySelectorAll('.stepper button').forEach(btn => {
+    const totalEl = el.querySelector('[data-total]');
+    const detailEl = el.querySelector('[data-detail]');
+    const tonsDisplayEl = el.querySelector('[data-tons-display]');
+    el.querySelectorAll('.stepper button').forEach(btn => {
       btn.addEventListener('click', () => {
         const delta = btn.dataset.action === 'plus' ? 1 : -1;
         tons = Math.max(0, tons + delta);
         const newPrice = priceRule(row, tons);
-        totalEl.textContent = money(newPrice.total);
+        if (totalEl) totalEl.textContent = money(newPrice.total);
         detailEl.textContent = detailLine(row, newPrice);
         tonsDisplayEl.textContent = `${tons} ton${tons === 1 ? '' : 's'}`;
       });
     });
   }
 
+  return el;
+}
+
+/** entry is either { single: {row, price} } or { variants: [{row, price}, ...] } */
+function renderCard(entry) {
+  const card = document.createElement('div');
+  card.className = 'result-card';
+  const headRow = entry.single ? entry.single.row : entry.variants[0].row;
+  const cityNote = headRow.city ? `<div class="result-city-note">${headRow.city}, ${headRow.state}</div>` : '';
+
+  if (entry.single) {
+    const { row, price } = entry.single;
+    card.innerHTML = `
+      <div class="result-top">
+        <div>
+          <div class="result-size">${row.size} yd</div>
+          <div class="result-vendor">${row.vendor}${row.phone ? ' · ' + row.phone : ''}</div>
+          ${cityNote}
+        </div>
+        <div class="result-total" data-total>${money(price.total)}</div>
+      </div>
+      <div class="result-detail-row" data-detail>${detailLine(row, price)}</div>
+      ${overageLine(price) ? `<div class="result-detail-row">${overageLine(price)}</div>` : ''}
+      ${row.debrisType ? `<div class="result-detail-row">${debrisBadge(row.debrisType)}</div>` : ''}
+      ${price.isHaulPlusDisposal ? `
+        <div class="adjuster">
+          <span class="badge badge--info">Haul + Disposal — adjustable</span>
+          <div class="stepper">
+            <button type="button" data-action="minus" aria-label="Fewer tons">−</button>
+            <span data-tons-display>${price.tons} ton${price.tons === 1 ? '' : 's'}</span>
+            <button type="button" data-action="plus" aria-label="More tons">+</button>
+          </div>
+        </div>
+      ` : ''}
+    `;
+    if (price.isHaulPlusDisposal) {
+      let tons = price.tons;
+      const totalEl = card.querySelector('[data-total]');
+      const detailEl = card.querySelector('[data-detail]');
+      const tonsDisplayEl = card.querySelector('[data-tons-display]');
+      card.querySelectorAll('.stepper button').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const delta = btn.dataset.action === 'plus' ? 1 : -1;
+          tons = Math.max(0, tons + delta);
+          const newPrice = priceRule(row, tons);
+          totalEl.textContent = money(newPrice.total);
+          detailEl.textContent = detailLine(row, newPrice);
+          tonsDisplayEl.textContent = `${tons} ton${tons === 1 ? '' : 's'}`;
+        });
+      });
+    }
+    return card;
+  }
+
+  // Grouped: multiple debris variants of the same vendor+city+size —
+  // one header, one labeled price block per variant.
+  card.innerHTML = `
+    <div class="result-top">
+      <div>
+        <div class="result-size">${headRow.size} yd</div>
+        <div class="result-vendor">${headRow.vendor}${headRow.phone ? ' · ' + headRow.phone : ''}</div>
+        ${cityNote}
+      </div>
+    </div>
+    <div class="variant-note">Pricing depends on debris type — select one above for a single price, or use what fits below.</div>
+  `;
+  const variantsWrap = document.createElement('div');
+  variantsWrap.className = 'variant-wrap';
+  entry.variants.forEach(({ row, price }) => {
+    variantsWrap.appendChild(buildPriceBlock(row, price, { withTotalHeader: true }));
+  });
+  card.appendChild(variantsWrap);
   return card;
 }
 
@@ -134,7 +213,7 @@ function render(data) {
     resultsEl.appendChild(noteEl);
   }
 
-  data.results.forEach(({ row, price }) => resultsEl.appendChild(renderCard(row, price)));
+  data.results.forEach(entry => resultsEl.appendChild(renderCard(entry)));
 }
 
 document.getElementById('search-btn').addEventListener('click', () => render(getQuotes(currentFilters())));
