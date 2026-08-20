@@ -58,6 +58,8 @@ SIZE_COLUMNS = ['10 yard', '15 yard', '20 yard', '30 yard', '40 yd']
 SIZE_TO_INT = {'10 yard': 10, '15 yard': 15, '20 yard': 20, '30 yard': 30, '40 yd': 40}
 STANDARD_TONS_BY_SIZE = {10: 1, 20: 2, 30: 3, 40: 4}  # no established convention for 15 YD
 
+NOT_OFFERED = {'', 'n/a', 'na', '-', 'n\\a', 'none'}
+
 STATE_TO_ABBR = {
     'Alabama': 'AL', 'Alaska': 'AK', 'Arizona': 'AZ', 'Arkansas': 'AR',
     'California': 'CA', 'Colorado': 'CO', 'Connecticut': 'CT',
@@ -76,22 +78,23 @@ STATE_TO_ABBR = {
     'Wisconsin': 'WI', 'Wyoming': 'WY', 'District of Columbia': 'DC',
 }
 
-NOT_OFFERED = {'', 'n/a', 'na', '-', 'n\\a', 'none'}
-
 PAREN_SIZE_RE = re.compile(r'\(\s*(\d+)\s*Y\s*D?\s*\)')
+BARE_SIZE_PREFIX_RE = re.compile(r'^\s*(\d+)\s*YD?\s*[/:\-]\s*', re.IGNORECASE)
 PRICE_RE = re.compile(
     r'^\$?\s*([\d,]+(?:\.\d+)?)\s*(?:/\s*(flat|[\d.]+\s*T))?\s*(?:/\s*\$?\s*(\d+)\s*Days?)?',
     re.IGNORECASE,
 )
 DAYS_ONLY_RE = re.compile(r'(\d+)\s*Days?', re.IGNORECASE)
-PER_HAUL_RE = re.compile(
-    r'\$?\s*([\d,]+(?:\.\d+)?)\s*Per\s*Haul\s*(?:/\s*(\d+)\s*Days?)?',
-    re.IGNORECASE,
-)
+AVAILABLE_ONLY_RE = re.compile(r'^\s*available\b', re.IGNORECASE)
+HAUL_RATE_RE = re.compile(r'\$?\s*([\d,]+(?:\.\d+)?)\s*(?:per\s*)?haul\b', re.IGNORECASE)
+BARE_HAUL_DOLLAR_DAYS_RE = re.compile(r'^\$\s*([\d,]+(?:\.\d+)?)\s*/\s*(\d+)\s*Days?', re.IGNORECASE)
 PER_TON_RE = re.compile(r'\$?\s*([\d.]+)\s*Per\s*Ton', re.IGNORECASE)
 PER_DAY_RE = re.compile(r'\$?\s*([\d.]+)\s*Per\s*Day', re.IGNORECASE)
+DELIVERY_INLINE_RE = re.compile(r'\$?\s*([\d.]+)\s*(?:a\s*)?del(?:ivery)?\b', re.IGNORECASE)
+DAYS_FLEXIBLE_RE = re.compile(r'(\d+)\s*d(?:ay)?s?\b(?:\s*rental)?', re.IGNORECASE)
 PCT_RE = re.compile(r'([\d.]+)\s*%')
 FLAT_DOLLAR_RE = re.compile(r'\$\s*([\d.]+)')
+SEE_CONTAINER_PHRASES = ('see container',)  # matches "see container size", "see container size rate", "see container pricing rate"
 
 NOTICE_MODELS = {'must_call_for_pricing', 'franchised', 'do_not_price_quote'}
 
@@ -100,6 +103,14 @@ def clean(v):
     if v is None or (isinstance(v, float) and math.isnan(v)):
         return None
     return v
+
+
+def as_number(v):
+    """Coerces to a real number, or None -- never lets a text sentinel like
+    'Flat' or 'See container size rate' silently leak into arithmetic."""
+    if isinstance(v, (int, float)) and not (isinstance(v, float) and math.isnan(v)):
+        return float(v)
+    return None
 
 
 def is_offered(raw):
@@ -112,43 +123,49 @@ def is_offered(raw):
 
 
 def normalize_pricing_model(raw):
-    """Returns (model, debrisType, seeContainerSize) or None to skip the row."""
+    """Returns (model, debrisType) or None to skip the row. Whether a
+    Haul + Disposal row is parsed per-size is decided later, per-cell,
+    from the Haul Rate column text -- not from the model name, since
+    Dee's data now signals it either way."""
     if raw is None or (isinstance(raw, float) and math.isnan(raw)):
         return None  # no pricing model at all -- no vendor, per Dee
     s = str(raw).strip().lower()
     if not s:
         return None
     if 'do not price quote' in s or s == 'dnq':
-        return ('do_not_price_quote', None, False)
+        return ('do_not_price_quote', None)
     if 'must call' in s:
-        return ('must_call_for_pricing', None, False)
+        return ('must_call_for_pricing', None)
     if 'franchise' in s:
-        return ('franchised', None, False)
+        return ('franchised', None)
     if 'haul' in s:
-        see_container = 'see container' in s or 'commercial' in s
-        return ('haul_plus_disposal', None, see_container)
+        return ('haul_plus_disposal', None)
     if s == 'standard mixed':
-        return ('standard', 'mixed', False)
+        return ('standard', 'mixed')
     if s == 'standard cnd':
-        return ('standard', 'cnd', False)
+        return ('standard', 'cnd')
     if s == 'standard':
-        return ('standard', None, False)
+        return ('standard', None)
     if s == 'flat rate residential':
-        return ('flat', 'mixed', False)
+        return ('flat', 'mixed')
     if s == 'flat rate cnd':
-        return ('flat', 'cnd', False)
+        return ('flat', 'cnd')
     if s in ('flat rate', 'flat'):
-        return ('flat', None, False)
+        return ('flat', None)
     return None  # unrecognized model -- skip rather than guess
 
 
 def strip_size_note(raw):
-    """Pulls a '(12YD)'-style real-size note out of a cell, returns (clean_text, note)."""
+    """Pulls a real-size note out of a cell, whichever format it's in --
+    '(12YD)', '12YD-', '12 YD:', '12YD/' -- returns (remaining_text, note)."""
     s = str(raw)
     m = PAREN_SIZE_RE.search(s)
-    note = f'{m.group(1)}YD' if m else None
-    cleaned = PAREN_SIZE_RE.sub('', s).strip()
-    return cleaned, note
+    if m:
+        return PAREN_SIZE_RE.sub('', s).strip(), f'{m.group(1)}YD'
+    m = BARE_SIZE_PREFIX_RE.match(s)
+    if m:
+        return BARE_SIZE_PREFIX_RE.sub('', s).strip(), f'{m.group(1)}YD'
+    return s, None
 
 
 def parse_standard_or_flat_cell(raw):
@@ -166,25 +183,56 @@ def parse_standard_or_flat_cell(raw):
     return {'price': price, 'rawTons': raw_tons, 'days': days, 'isFlatCell': is_flat, 'realSizeNote': note}
 
 
-def parse_haul_cell(raw, see_container_size):
-    """Returns dict with days (and haulRate if see_container_size), or None."""
-    cleaned, note = strip_size_note(raw)
-    if see_container_size:
-        m = PER_HAUL_RE.search(cleaned)
-        if not m:
-            return None
-        return {
-            'haulRate': float(m.group(1).replace(',', '')),
-            'days': int(m.group(2)) if m.group(2) else None,
-            'realSizeNote': note,
-        }
-    m = DAYS_ONLY_RE.search(cleaned)
-    return {'days': int(m.group(1)) if m else None, 'realSizeNote': note}
+def parse_haul_cell(raw, per_size_mode):
+    """Independent field-by-field extraction rather than one rigid anchored
+    pattern -- the real data mixes at least 50 different cell shapes for
+    this model (with/without '$', with/without 'Per', 'Haul' vs 'haul',
+    'Days' vs 'Day Rental', embedded per-ton/delivery overrides, a bare
+    size+days cell with no price at all, and 'Available' meaning
+    must-call for that one size). Returns a dict, or a dict with
+    sizeMustCall=True for an 'Available'-only cell, or None only if truly
+    nothing usable is in the cell at all.
+    """
+    s = str(raw)
+    cleaned, note = strip_size_note(s)
+
+    if AVAILABLE_ONLY_RE.match(cleaned) and not re.search(r'\d', cleaned):
+        return {'sizeMustCall': True, 'realSizeNote': note}
+
+    days_m = DAYS_FLEXIBLE_RE.search(cleaned)
+    days = int(days_m.group(1)) if days_m else None
+
+    if not per_size_mode:
+        # Shared Haul Rate column is the real price; this cell is just
+        # confirming the size is offered, with rental days if given.
+        return {'days': days, 'realSizeNote': note}
+
+    haul_m = HAUL_RATE_RE.search(cleaned)
+    haul_rate = float(haul_m.group(1).replace(',', '')) if haul_m else None
+    if haul_rate is None:
+        # No 'haul' keyword at all -- a few vendors just write "$315/7 Days"
+        bare_m = BARE_HAUL_DOLLAR_DAYS_RE.match(cleaned)
+        if bare_m:
+            haul_rate = float(bare_m.group(1).replace(',', ''))
+            days = int(bare_m.group(2))
+
+    ton_m = PER_TON_RE.search(cleaned)
+    ton_override = float(ton_m.group(1)) if ton_m else None
+    delivery_m = DELIVERY_INLINE_RE.search(cleaned)
+    delivery_override = float(delivery_m.group(1)) if delivery_m else None
+
+    if haul_rate is None:
+        return None  # genuinely couldn't find a price -- skip, don't guess
+
+    return {
+        'haulRate': haul_rate, 'days': days, 'realSizeNote': note,
+        'tonOverride': ton_override, 'deliveryOverride': delivery_override,
+    }
 
 
 def parse_overage(raw):
     """Extracts BOTH a per-ton and a per-day rate independently -- a single
-    'Other' cell very often carries both ('$35 Per Ton $10 Per Day')."""
+    'Other' cell very often carries both ('$35 Per Ton $10 Per Day').""" 
     if raw is None or (isinstance(raw, float) and math.isnan(raw)):
         return {'ton': None, 'day': None}
     s = str(raw)
@@ -233,21 +281,33 @@ def convert(xlsx_path):
         if model_info is None:
             no_model_skipped += 1
             continue
-        model, model_debris, see_container = model_info
+        model, model_debris = model_info
 
         state_full = clean(row.get('State'))
         state_abbr = STATE_TO_ABBR.get(state_full, state_full)
         city = clean(row.get('City'))
         vendor = clean(row.get('Vendor')) or 'Unnamed vendor'
         phone = clean(row.get('Phone'))
-        delivery = clean(row.get('Delivery')) or 0
+        delivery = as_number(row.get('Delivery')) or 0
         fuel_flat, fuel_percent = parse_fuel_surcharge(row.get('Fuel Surcharge'))
-        tax_rate = clean(row.get('Sales Tax Rate')) or 0
+        tax_rate = as_number(row.get('Sales Tax Rate')) or 0
         overage = parse_overage(row.get('Other'))
         cnd_override = parse_debris_ton_override(row.get('CnD Waste'))
         mixed_override = parse_debris_ton_override(row.get('Mixed Waste'))
-        shared_haul_rate = clean(row.get('Haul Rate'))
-        shared_ton_rate = clean(row.get('Tonnage Rate'))
+        shared_haul_rate = as_number(row.get('Haul Rate'))
+        shared_ton_rate = as_number(row.get('Tonnage Rate'))
+        # Per-size mode is signaled either by the Haul Rate column being
+        # text ("See container size rate" / "see container pricing rate" /
+        # etc, all non-numeric) or by the old explicit "...Commercial -
+        # See container size..." model name Dee used before consolidating.
+        haul_rate_raw = row.get('Haul Rate')
+        per_size_mode = (
+            (isinstance(haul_rate_raw, str) and 'see container' in haul_rate_raw.lower())
+            or (isinstance(row.get('Pricing Model'), str) and 'see container' in row.get('Pricing Model').lower())
+        )
+        # "Tonnage Rate: Flat" means disposal is bundled into the haul
+        # rate itself -- no per-ton component at all for this vendor.
+        ton_rate_is_flat = isinstance(row.get('Tonnage Rate'), str) and row.get('Tonnage Rate').strip().lower() == 'flat'
 
         for col in SIZE_COLUMNS:
             raw_val = row.get(col)
@@ -275,22 +335,42 @@ def convert(xlsx_path):
                 continue
 
             if model == 'haul_plus_disposal':
-                parsed = parse_haul_cell(raw_val, see_container)
+                parsed = parse_haul_cell(raw_val, per_size_mode)
                 if parsed is None:
                     skipped.append((state_full, city, vendor, col, raw_val))
                     continue
-                haul_rate = parsed.get('haulRate', shared_haul_rate) if see_container else shared_haul_rate
-                variants = [(None, shared_ton_rate)]
+                if parsed.get('sizeMustCall'):
+                    # This specific size needs a call -- same notice
+                    # treatment as a must_call_for_pricing row, scoped to
+                    # just this size rather than the whole vendor.
+                    rule = {**base, 'pricingModel': 'must_call_for_pricing',
+                            'debrisType': None, 'haulRate': None, 'perTon': None,
+                            'price': None, 'rawTons': None, 'rentalDays': None,
+                            'tonOverageRate': None, 'dayOverageRate': None,
+                            'realSizeNote': parsed.get('realSizeNote')}
+                    rule['id'] = f'p{rule_id}'; rule_id += 1
+                    rules.append(rule)
+                    continue
+
+                haul_rate = parsed.get('haulRate') if per_size_mode else shared_haul_rate
+                if parsed.get('deliveryOverride') is not None:
+                    base = {**base, 'delivery': parsed['deliveryOverride']}
+                if haul_rate is None:
+                    skipped.append((state_full, city, vendor, col, raw_val))
+                    continue
+
+                base_ton_rate = 0 if ton_rate_is_flat else (parsed.get('tonOverride') if parsed.get('tonOverride') is not None else shared_ton_rate)
+                variants = [(None, base_ton_rate)]
                 if cnd_override is not None:
                     variants.append(('cnd', cnd_override))
                 if mixed_override is not None:
                     variants.append(('mixed', mixed_override))
                 for debris_type, per_ton in variants:
                     rule = {**base, 'debrisType': debris_type,
-                            'haulRate': haul_rate, 'perTon': per_ton,
+                            'haulRate': haul_rate, 'perTon': per_ton or 0,
                             'price': None, 'rawTons': None,
                             'rentalDays': parsed['days'],
-                            'tonOverageRate': per_ton, 'dayOverageRate': overage['day'],
+                            'tonOverageRate': per_ton or 0, 'dayOverageRate': overage['day'],
                             'realSizeNote': parsed.get('realSizeNote')}
                     rule['id'] = f'p{rule_id}'; rule_id += 1
                     rules.append(rule)
@@ -357,13 +437,7 @@ export const SIZES = [10, 15, 20, 30, 40];
 export const DEBRIS_TYPES = [
   { id: 'cnd', name: 'CnD / Construction' },
   { id: 'mixed', name: 'Mixed / Household' },
-  { id: 'concrete', name: 'Concrete' },
-  { id: 'shingles', name: 'Shingles' },
-  { id: 'yard', name: 'Yard Waste' },
 ];
-// NOTE: only CnD and Mixed have vendor data that actually distinguishes
-// pricing today. Concrete/Shingles/Yard Waste selections currently behave
-// like "Any type" -- nothing in the sheet differentiates them yet.
 
 /* No zip column wired in yet -- zip search falls back to the state/
    regional estimate. */
@@ -371,6 +445,8 @@ export const ZIP_TO_LOCATION = {};
 
 export const MARGIN_DIVISOR = 0.74;
 export const CC_FEE_RATE = 0.035;
+export const ESTIMATE_BUMP = 1.15;
+export const ESTIMATE_RENTAL_DAYS = 7;
 
 export const PRICING_RULES = '''
     # Minified on purpose -- at 50k+ rules, pretty-printing roughly

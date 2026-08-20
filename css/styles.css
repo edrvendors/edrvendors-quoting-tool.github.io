@@ -177,10 +177,26 @@ button, input, select {
   background: linear-gradient(180deg, var(--amber), var(--steel));
 }
 
+.vendor-links {
+  display: flex;
+  justify-content: center;
+  gap: 32px;
+  padding: 24px;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+}
+.vendor-links a {
+  color: var(--text-muted);
+  text-decoration: none;
+  border-bottom: 1px solid var(--border);
+}
+.vendor-links a:hover { color: var(--text); border-color: var(--text-muted); }
+
 @media (max-width: 720px) {
   .lanes { flex-direction: column; }
   .seam { width: 100%; height: 4px; }
   .lane { padding: 40px 28px; min-height: 46vh; }
+  .vendor-links { flex-direction: column; align-items: center; gap: 12px; }
 }
 
 /* ---------- Sales / Admin pages ---------- */
@@ -562,4 +578,21 @@ button, input, select {
   justify-content: space-between;
   align-items: center;
   gap: 12px;
+}
+
+/* Estimate / call-vendor cards — visually distinct from a real vendor
+   quote so a rep can't mistake either for an actual price. */
+.result-card--estimate {
+  border-style: dashed;
+  background: var(--surface-2);
+}
+
+.result-card--call {
+  border-style: dashed;
+}
+
+.text-link {
+  color: var(--role-text);
+  font-weight: 600;
+  text-decoration: underline;
 }

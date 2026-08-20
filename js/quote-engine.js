@@ -38,17 +38,27 @@
      real vendor contact is worth knowing), "franchised" (the city can't
      be serviced at all — bold "can't help" notice), and
      "do_not_price_quote" (a blacklisted vendor — hidden from sales
-     entirely, visible to admin only as a warning).
+     entirely, visible to admin only as a warning). A single size within
+     an otherwise-priceable Haul + Disposal vendor can also carry its own
+     must-call notice (an "Available — call for pricing" cell) — same
+     treatment, scoped to just that size.
    - A row with no Pricing Model at all was dropped during data
      conversion — never reaches this engine, same as no vendor existing.
+   - When there's no priced vendor in the exact searched city, the site
+     does NOT fall back to showing real vendor prices from elsewhere in
+     the state — that would misrepresent another city's actual vendor as
+     if they were local. Instead it shows a computed state-average
+     ESTIMATE per size (Standard-model rows in that state only, averaged,
+     bumped 15%, taxed at the state's highest listed rate, ÷0.74, flat
+     7-day rental) clearly labeled as an estimate, plus — separately, with
+     no price attached — the name and phone number of a vendor in that
+     state worth calling to check if they'll actually service the area.
    ========================================================= */
 
 import {
   PRICING_RULES, ZIP_TO_LOCATION, STANDARD_TONS_BY_SIZE,
-  MARGIN_DIVISOR, CC_FEE_RATE,
+  MARGIN_DIVISOR, CC_FEE_RATE, ESTIMATE_BUMP, ESTIMATE_RENTAL_DAYS, SIZES,
 } from './data.js';
-
-const TIER_LABEL = { city: 'City match', state: 'State match', regional: 'Regional estimate' };
 
 const PRICEABLE_MODELS = new Set(['standard', 'flat', 'haul_plus_disposal']);
 // Shown as a bold notice on sales results when they occur in the exact
@@ -57,33 +67,13 @@ const PRICEABLE_MODELS = new Set(['standard', 'flat', 'haul_plus_disposal']);
 const NOTICE_MODELS = new Set(['must_call_for_pricing', 'franchised']);
 
 // Debris ids that actual vendor data distinguishes today. Any other
-// selection (concrete/shingles/yard/any/blank) behaves like "show
-// everything" — nothing in the sheet differentiates those yet.
+// selection (any/blank) behaves like "show everything".
 const DATA_BACKED_DEBRIS = new Set(['cnd', 'mixed']);
 
 export function resolveZip(raw) {
   const zip = (raw || '').trim();
   if (!/^\d{5}$/.test(zip)) return null;
   return ZIP_TO_LOCATION[zip] || null;
-}
-
-/** city -> state -> regional, counting ONLY priceable rows toward a match —
- *  a city with nothing but a "must call" or "franchised" row is treated
- *  the same as a city with no vendor at all, for fallback purposes. No
- *  county tier — the real sheet has no county data, so that tier from the
- *  earlier mock is dropped for now. */
-function resolveTier(priceableRows, { city, state }) {
-  if (city) {
-    const cityRows = state
-      ? priceableRows.filter(r => r.city?.toLowerCase() === city.toLowerCase() && r.state === state)
-      : priceableRows.filter(r => r.city?.toLowerCase() === city.toLowerCase());
-    if (cityRows.length) return { tier: 'city', rows: cityRows };
-  }
-  if (state) {
-    const stateRows = priceableRows.filter(r => r.state === state);
-    if (stateRows.length) return { tier: 'state', rows: stateRows };
-  }
-  return { tier: 'regional', rows: [] }; // no real "regional" pool without a state to anchor to
 }
 
 function includedTons(row) {
@@ -186,6 +176,80 @@ function groupForDisplay(items) {
   });
 }
 
+/** City notices (must-call / franchised, including a single Haul +
+ *  Disposal size that's must-call on its own) for the EXACT searched
+ *  city. City-only matching works the same as priced results — state is
+ *  used to disambiguate same-named cities in different states when
+ *  given, but isn't required. Filtered to the selected size (if any) and
+ *  deduplicated by vendor so a vendor offering four must-call sizes
+ *  doesn't produce four banners when the rep hasn't narrowed by size. */
+function findCityNotices(city, state, size) {
+  if (!city) return [];
+  let rows = state
+    ? PRICING_RULES.filter(r => r.city?.toLowerCase() === city.toLowerCase() && r.state === state)
+    : PRICING_RULES.filter(r => r.city?.toLowerCase() === city.toLowerCase());
+  rows = rows.filter(r => NOTICE_MODELS.has(r.pricingModel));
+  if (size && size !== 'any') {
+    rows = rows.filter(r => String(r.size) === String(size));
+  }
+  const seen = new Set();
+  return rows.filter(r => {
+    const key = r.vendor + '|' + r.pricingModel;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+/** Standard-model rows in a state, one per unique vendor+city+size so a
+ *  vendor with multiple debris variants isn't weighted more than once. */
+function standardRowsForState(state) {
+  const seen = new Set();
+  return PRICING_RULES.filter(r => {
+    if (r.state !== state || r.pricingModel !== 'standard') return false;
+    const key = [r.vendor, r.city, r.size].join('|');
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+/** State-average estimate per size: average of real Standard-model base
+ *  prices in that state, bumped 15%, taxed at the state's highest listed
+ *  rate, ÷0.74. No card fee (this isn't a real vendor transaction) and a
+ *  flat 7-day rental, since there's no real vendor data to draw a rental
+ *  period from. Only returns a size if the state actually has Standard
+ *  rows for it -- no data to average means no estimate, rather than a
+ *  guess. */
+function stateEstimates(state) {
+  const stateRows = standardRowsForState(state);
+  if (!stateRows.length) return [];
+  const highestTax = Math.max(...PRICING_RULES.filter(r => r.state === state).map(r => r.taxRate || 0));
+  return SIZES.map(size => {
+    const sizeRows = stateRows.filter(r => r.size === size && r.price != null);
+    if (!sizeRows.length) return null;
+    const avg = sizeRows.reduce((sum, r) => sum + r.price, 0) / sizeRows.length;
+    const bumped = avg * ESTIMATE_BUMP;
+    const total = (bumped * (1 + highestTax)) / MARGIN_DIVISOR;
+    return { size, total, rentalDays: ESTIMATE_RENTAL_DAYS, sampleSize: sizeRows.length };
+  }).filter(Boolean);
+}
+
+/** Best-effort "someone to call and check" suggestion -- name and phone
+ *  only, never a price. There's no zip/lat-long geocoding wired in yet,
+ *  so "nearby" is necessarily approximate: any vendor in the same state
+ *  with a phone number on file, not a true distance calculation. */
+function vendorsToCall(state, size) {
+  const seen = new Set();
+  const candidates = PRICING_RULES.filter(r => {
+    if (r.state !== state || !r.phone || seen.has(r.vendor)) return false;
+    if (size && size !== 'any' && r.size !== Number(size)) return false;
+    seen.add(r.vendor);
+    return true;
+  });
+  return candidates.slice(0, 2).map(r => ({ vendor: r.vendor, phone: r.phone, city: r.city }));
+}
+
 /** Admin search — direct substring/exact match on city, state, and/or
  *  vendor name, no location fallback logic (that's a sales-flow concept).
  *  Never grouped — admin wants every raw row visible, debris variants
@@ -222,37 +286,50 @@ export function getQuotes(filters) {
 
   const hasLocation = hasCityState || !!zipEntered;
   if (!hasLocation) {
-    return { hasLocation: false, tier: null, tierLabel: '', results: [], note: '', cityNotices: [] };
+    return { hasLocation: false, tier: null, results: [], note: '', cityNotices: [], estimates: [], callVendors: [] };
   }
 
-  // Must-call / franchised notices for the EXACT searched city — shown
-  // regardless of whether a priced vendor also exists there, and never
-  // subject to the state/regional fallback (they're tied to that one city).
-  const cityNotices = (location.city && location.state)
-    ? PRICING_RULES.filter(r =>
-        r.city?.toLowerCase() === location.city.toLowerCase() &&
-        r.state === location.state &&
-        NOTICE_MODELS.has(r.pricingModel))
-    : [];
+  const cityNotices = findCityNotices(location.city, location.state, filters.size);
 
   const priceableRows = PRICING_RULES.filter(r => PRICEABLE_MODELS.has(r.pricingModel));
-  const match = resolveTier(priceableRows, location);
-  let rows = match.rows;
-  if (filters.size && filters.size !== 'any') {
-    rows = rows.filter(r => String(r.size) === String(filters.size));
-  }
-  rows = filterByDebris(rows, filters.debrisId);
+  let cityRows = location.city
+    ? (location.state
+        ? priceableRows.filter(r => r.city?.toLowerCase() === location.city.toLowerCase() && r.state === location.state)
+        : priceableRows.filter(r => r.city?.toLowerCase() === location.city.toLowerCase()))
+    : [];
 
-  const items = rows.map(row => ({ row, price: priceRule(row) }));
-  const results = groupForDisplay(items);
+  if (filters.size && filters.size !== 'any') {
+    cityRows = cityRows.filter(r => String(r.size) === String(filters.size));
+  }
+  cityRows = filterByDebris(cityRows, filters.debrisId);
+
+  if (cityRows.length) {
+    const items = cityRows.map(row => ({ row, price: priceRule(row) }));
+    return {
+      hasLocation: true, tier: 'city', note,
+      results: groupForDisplay(items), cityNotices, estimates: [], callVendors: [],
+    };
+  }
+
+  // No priced vendor in the exact city -- a state-average estimate, not
+  // another city's real vendor prices standing in for this one.
+  if (!location.state) {
+    return { hasLocation: true, tier: 'none', note, results: [], cityNotices, estimates: [], callVendors: [] };
+  }
+  let estimates = stateEstimates(location.state);
+  if (filters.size && filters.size !== 'any') {
+    estimates = estimates.filter(e => String(e.size) === String(filters.size));
+  }
+  const callVendors = vendorsToCall(location.state, filters.size);
 
   return {
     hasLocation: true,
-    tier: match.tier,
-    tierLabel: TIER_LABEL[match.tier],
+    tier: 'estimate',
     note,
-    results,
+    results: [],
     cityNotices,
+    estimates,
+    callVendors,
   };
 }
 

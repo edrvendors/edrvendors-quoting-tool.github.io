@@ -43,6 +43,12 @@ function debrisBadge(debrisType) {
   return `<span class="badge badge--debris">${name}</span>`;
 }
 
+function addVendorLink(city, state) {
+  const area = [city, state].filter(Boolean).join(', ');
+  const href = area ? `add-vendor.html?area=${encodeURIComponent(area)}` : 'add-vendor.html';
+  return `<a class="text-link" href="${href}">+ Add a vendor for this area</a>`;
+}
+
 /** Renders one priced line — a full single-vendor card body, or one
  *  variant's slice within a grouped multi-debris card. */
 function buildPriceBlock(row, price, { withTotalHeader }) {
@@ -184,6 +190,36 @@ function noticeBanner(row) {
   return '';
 }
 
+/** A computed state-average price, never a real vendor's price — kept
+ *  visually distinct so a rep can't mistake it for an actual quote. */
+function estimateCard(estimate) {
+  const card = document.createElement('div');
+  card.className = 'result-card result-card--estimate';
+  card.innerHTML = `
+    <div class="result-top">
+      <div>
+        <div class="result-size">${estimate.size} yd</div>
+        <div class="result-vendor">Estimated price — no vendor confirmed yet</div>
+      </div>
+      <div class="result-total">${money(estimate.total)}</div>
+    </div>
+    <div class="result-detail-row">${estimate.rentalDays} day rental (typical) · based on the state average, not a specific vendor</div>
+  `;
+  return card;
+}
+
+/** Contact-only suggestion — never a price, just who might be worth a call. */
+function callVendorCard(vendors, city, state) {
+  const card = document.createElement('div');
+  card.className = 'result-card result-card--call';
+  const rows = vendors.map(v => `<div class="result-detail-row"><b>${v.vendor}</b> · ${v.phone}</div>`).join('');
+  card.innerHTML = `
+    <div class="result-vendor">Try calling to check if they service ${[city, state].filter(Boolean).join(', ') || 'this area'}</div>
+    ${rows}
+  `;
+  return card;
+}
+
 function render(data) {
   resultsEl.innerHTML = '';
 
@@ -201,19 +237,35 @@ function render(data) {
     resultsEl.appendChild(noteEl);
   }
 
-  if (!data.results.length) {
-    resultsEl.innerHTML += `<div class="empty-state">No vendors found for that area yet in the sample data.</div>`;
+  const filters = currentFilters();
+
+  if (data.tier === 'city') {
+    data.results.forEach(entry => resultsEl.appendChild(renderCard(entry)));
     return;
   }
 
-  if (data.tier !== 'city') {
-    const noteEl = document.createElement('div');
-    noteEl.className = 'match-tier';
-    noteEl.textContent = 'No exact match for that city — showing the closest vendors available in the area.';
-    resultsEl.appendChild(noteEl);
-  }
+  // No priced vendor in the exact city — an estimate (if the state has
+  // enough data to build one) plus contact-only suggestions, never
+  // another city's real vendor prices standing in for this one.
+  const noteEl = document.createElement('div');
+  noteEl.className = 'match-tier';
+  noteEl.textContent = 'No vendor on file for that exact city — showing a state-average estimate instead.';
+  resultsEl.appendChild(noteEl);
 
-  data.results.forEach(entry => resultsEl.appendChild(renderCard(entry)));
+  if (data.estimates && data.estimates.length) {
+    data.estimates.forEach(e => resultsEl.appendChild(estimateCard(e)));
+  }
+  if (data.callVendors && data.callVendors.length) {
+    resultsEl.appendChild(callVendorCard(data.callVendors, filters.cityRaw, filters.stateRaw));
+  }
+  if (!(data.estimates && data.estimates.length) && !(data.callVendors && data.callVendors.length)) {
+    resultsEl.innerHTML += `<div class="empty-state">Nothing on file for that area yet. ${addVendorLink(filters.cityRaw, filters.stateRaw)}</div>`;
+  } else {
+    const linkEl = document.createElement('div');
+    linkEl.className = 'match-tier';
+    linkEl.innerHTML = addVendorLink(filters.cityRaw, filters.stateRaw);
+    resultsEl.appendChild(linkEl);
+  }
 }
 
 document.getElementById('search-btn').addEventListener('click', () => render(getQuotes(currentFilters())));
