@@ -43,6 +43,17 @@ function debrisBadge(debrisType) {
   return `<span class="badge badge--debris">${name}</span>`;
 }
 
+/** Fallback distinguishing label for a grouped card when variants don't
+ *  differ by debris type -- e.g. a vendor with more than one internal
+ *  pricing zone covering the same city name. Without some label, two
+ *  identically-priced-looking lines with no explanation is worse than
+ *  showing the vendor's own zone reference. */
+function variantLabel(row) {
+  if (row.debrisType) return debrisBadge(row.debrisType);
+  if (row.zoneLabel) return `<span class="badge badge--debris">${row.zoneLabel}</span>`;
+  return '';
+}
+
 function addVendorLink(city, state) {
   const area = [city, state].filter(Boolean).join(', ');
   const href = area ? `add-vendor.html?area=${encodeURIComponent(area)}` : 'add-vendor.html';
@@ -58,7 +69,7 @@ function buildPriceBlock(row, price, { withTotalHeader }) {
 
   const totalHeader = withTotalHeader ? `
     <div class="price-block__top">
-      ${debrisBadge(row.debrisType)}
+      ${variantLabel(row)}
       <div class="result-total" data-total>${money(price.total)}</div>
     </div>
   ` : '';
@@ -160,7 +171,7 @@ function renderCard(entry) {
         ${cityNote}
       </div>
     </div>
-    <div class="variant-note">Pricing depends on debris type — select one above for a single price, or use what fits below.</div>
+    <div class="variant-note">More than one price applies here — see the label on each line below, or narrow your search above for a single number.</div>
   `;
   const variantsWrap = document.createElement('div');
   variantsWrap.className = 'variant-wrap';

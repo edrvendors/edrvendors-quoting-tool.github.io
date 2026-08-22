@@ -75,7 +75,9 @@ function render(results) {
         <div>Tax rate: <b>${row.taxRate != null ? (row.taxRate * 100).toFixed(2) + '%' : '\u2014'}</b></div>
         <div>Ton overage (raw): <b>${row.tonOverageRate != null ? money(row.tonOverageRate) + '/ton' : '\u2014'}</b></div>
         <div>Day overage (raw): <b>${row.dayOverageRate != null ? money(row.dayOverageRate) + '/day' : '\u2014'}</b></div>
+        ${row.weekOverageRate != null ? `<div>Week overage (raw, not shown to sales yet): <b>${money(row.weekOverageRate)}/week</b></div>` : ''}
         ${row.realSizeNote ? `<div>Real container size: <b>${row.realSizeNote}</b></div>` : ''}
+        ${row.zoneLabel ? `<div>Vendor's internal pricing zone: <b>${row.zoneLabel}</b></div>` : ''}
       </div>
       <details class="breakdown">
         <summary>Original sheet cell</summary>

@@ -79,18 +79,25 @@ STATE_TO_ABBR = {
 }
 
 PAREN_SIZE_RE = re.compile(r'\(\s*(\d+)\s*Y\s*D?\s*\)')
-BARE_SIZE_PREFIX_RE = re.compile(r'^\s*(\d+)\s*YD?\s*[/:\-]\s*', re.IGNORECASE)
+BARE_SIZE_PREFIX_RE = re.compile(r'^\s*(\d+)\s*YD?\s*(?:[/:\-]\s*|\s+|(?=\$))', re.IGNORECASE)
 ZONE_PREFIX_RE = re.compile(r'^\s*zone\s*\d+\s*', re.IGNORECASE)
+PRICE_SEARCH_FALLBACK_RE = re.compile(
+    r'\$\s*([\d,]+(?:\.\d+)?)\s*(?:/\s*(flat|none|[\d.]+\s*T))?\s*(?:/\s*\$?\s*(\d+)\s*d(?:ays?)?)?',
+    re.IGNORECASE,
+)
 PRICE_RE = re.compile(
-    r'^\$?\s*([\d,]+(?:\.\d+)?)\s*(?:/\s*(flat|[\d.]+\s*T))?\s*(?:/\s*\$?\s*(\d+)\s*Days?)?',
+    r'^\$?\s*([\d,]+(?:\.\d+)?)\s*(?:/\s*(flat|none|[\d.]+\s*T))?\s*(?:/\s*\$?\s*(\d+)\s*d(?:ays?)?)?',
     re.IGNORECASE,
 )
 DAYS_ONLY_RE = re.compile(r'(\d+)\s*Days?', re.IGNORECASE)
 AVAILABLE_ONLY_RE = re.compile(r'^\s*available\b', re.IGNORECASE)
+PRICE_ONLY_LOOKS_LIKE_DAYS_RE = re.compile(r'^\s*\d+\s*d(?:ays?)?\s*$', re.IGNORECASE)
+DELIVERY_PREFIX_RE = re.compile(r'^\$?\s*([\d.]+)\s*del(?:ivery)?\b\s*/?\s*', re.IGNORECASE)
 HAUL_RATE_RE = re.compile(r'\$?\s*([\d,]+(?:\.\d+)?)\s*(?:per\s*)?haul\b', re.IGNORECASE)
 BARE_HAUL_DOLLAR_DAYS_RE = re.compile(r'^\$\s*([\d,]+(?:\.\d+)?)\s*/\s*(\d+)\s*Days?', re.IGNORECASE)
-PER_TON_RE = re.compile(r'\$?\s*([\d.]+)\s*Per\s*Ton', re.IGNORECASE)
-PER_DAY_RE = re.compile(r'\$?\s*([\d.]+)\s*Per\s*Day', re.IGNORECASE)
+PER_TON_RE = re.compile(r'\$?\s*([\d.]+)\s*\$?\s*(?:Per\s*Ton|/\s*Ton\b|/\s*T\b)', re.IGNORECASE)
+PER_DAY_RE = re.compile(r'\$?\s*([\d.]+)\s*\$?\s*(?:Per\s*Day|/\s*Day\b|/\s*D\b)', re.IGNORECASE)
+PER_WEEK_RE = re.compile(r'\$?\s*([\d.]+)\s*\$?\s*(?:Per\s*Week|/\s*Week\b|/\s*Wk\b)', re.IGNORECASE)
 DELIVERY_INLINE_RE = re.compile(r'\$?\s*([\d.]+)\s*(?:a\s*)?del(?:ivery)?\b', re.IGNORECASE)
 DAYS_FLEXIBLE_RE = re.compile(r'(\d+)\s*d(?:ay)?s?\b(?:\s*rental)?', re.IGNORECASE)
 PCT_RE = re.compile(r'([\d.]+)\s*%')
@@ -158,33 +165,61 @@ def normalize_pricing_model(raw):
 
 def strip_size_note(raw):
     """Pulls a real-size note out of a cell, whichever format it's in --
-    '(12YD)', '12YD-', '12 YD:', '12YD/' -- returns (remaining_text, note).
-    Also strips a leading 'Zone N' service-area label some vendors use,
-    which isn't a real-size note but breaks price parsing the same way if
-    left in (the raw cell text is preserved separately either way)."""
-    s = ZONE_PREFIX_RE.sub('', str(raw))
+    '(12YD)', '12YD-', '12 YD:', '12YD/' -- returns (remaining_text, note,
+    zone_label). Also strips a leading 'Zone N' service-area label some
+    vendors use (kept separately as an admin-reference field, since it
+    isn't needed for routing -- every city LAM Hauling uses it for maps
+    to exactly one zone already, so the existing city-based matching
+    already resolves it correctly)."""
+    s = str(raw)
+    zone_m = ZONE_PREFIX_RE.match(s)
+    zone_label = f'Zone {re.search(r"\d+", zone_m.group()).group()}' if zone_m else None
+    s = ZONE_PREFIX_RE.sub('', s)
     m = PAREN_SIZE_RE.search(s)
     if m:
-        return PAREN_SIZE_RE.sub('', s).strip(), f'{m.group(1)}YD'
+        return PAREN_SIZE_RE.sub('', s).strip(), f'{m.group(1)}YD', zone_label
     m = BARE_SIZE_PREFIX_RE.match(s)
     if m:
-        return BARE_SIZE_PREFIX_RE.sub('', s).strip(), f'{m.group(1)}YD'
-    return s.strip(), None
+        return BARE_SIZE_PREFIX_RE.sub('', s).strip(), f'{m.group(1)}YD', zone_label
+    return s.strip(), None, zone_label
 
 
 def parse_standard_or_flat_cell(raw):
-    """Returns dict with price/rawTons/days/isFlatCell, or None if unparseable."""
-    cleaned, note = strip_size_note(raw)
-    m = PRICE_RE.match(cleaned.strip())
+    """Returns dict with price/rawTons/days/isFlatCell, or None if unparseable.
+    Tries an anchored match first (the normal case); if the cell has some
+    other label/descriptor text before the real price (a phrasing we
+    haven't seen enough to name specifically, unlike the Zone/size-note
+    prefixes stripped above), falls back to finding a '$X/tons/days'
+    chunk anywhere in the cell rather than giving up. A leading '$X del'
+    fee is stripped and returned separately -- otherwise it reads as if
+    it were the whole price (a real, confirmed bug: '$100 del $200/...'
+    was pricing the container at $100 instead of $200)."""
+    cleaned, note, zone_label = strip_size_note(raw)
+    delivery_override = None
+    del_m = DELIVERY_PREFIX_RE.match(cleaned)
+    if del_m:
+        delivery_override = float(del_m.group(1))
+        cleaned = DELIVERY_PREFIX_RE.sub('', cleaned)
+
+    stripped = cleaned.strip()
+    if PRICE_ONLY_LOOKS_LIKE_DAYS_RE.match(stripped):
+        return None  # e.g. a bare "14 Days" with no price at all -- not a price
+
+    m = PRICE_RE.match(stripped)
+    if not m:
+        m = PRICE_SEARCH_FALLBACK_RE.search(cleaned)
     if not m:
         return None
     price = float(m.group(1).replace(',', ''))
     tons_raw = m.group(2)
     days_raw = m.group(3)
     is_flat = bool(tons_raw and 'flat' in tons_raw.lower())
-    raw_tons = None if not tons_raw or is_flat else float(tons_raw.lower().replace('t', '').strip())
+    is_unspecified_tons = bool(tons_raw and tons_raw.lower() == 'none')
+    raw_tons = (None if (not tons_raw or is_flat or is_unspecified_tons)
+                else float(tons_raw.lower().replace('t', '').strip()))
     days = int(days_raw) if days_raw else None
-    return {'price': price, 'rawTons': raw_tons, 'days': days, 'isFlatCell': is_flat, 'realSizeNote': note}
+    return {'price': price, 'rawTons': raw_tons, 'days': days, 'isFlatCell': is_flat,
+            'realSizeNote': note, 'deliveryOverride': delivery_override, 'zoneLabel': zone_label}
 
 
 def parse_haul_cell(raw, per_size_mode):
@@ -198,7 +233,7 @@ def parse_haul_cell(raw, per_size_mode):
     nothing usable is in the cell at all.
     """
     s = str(raw)
-    cleaned, note = strip_size_note(s)
+    cleaned, note, zone_label = strip_size_note(s)
 
     if AVAILABLE_ONLY_RE.match(cleaned) and not re.search(r'\d', cleaned):
         return {'sizeMustCall': True, 'realSizeNote': note}
@@ -209,7 +244,7 @@ def parse_haul_cell(raw, per_size_mode):
     if not per_size_mode:
         # Shared Haul Rate column is the real price; this cell is just
         # confirming the size is offered, with rental days if given.
-        return {'days': days, 'realSizeNote': note}
+        return {'days': days, 'realSizeNote': note, 'zoneLabel': zone_label}
 
     haul_m = HAUL_RATE_RE.search(cleaned)
     haul_rate = float(haul_m.group(1).replace(',', '')) if haul_m else None
@@ -229,22 +264,28 @@ def parse_haul_cell(raw, per_size_mode):
         return None  # genuinely couldn't find a price -- skip, don't guess
 
     return {
-        'haulRate': haul_rate, 'days': days, 'realSizeNote': note,
+        'haulRate': haul_rate, 'days': days, 'realSizeNote': note, 'zoneLabel': zone_label,
         'tonOverride': ton_override, 'deliveryOverride': delivery_override,
     }
 
 
 def parse_overage(raw):
-    """Extracts BOTH a per-ton and a per-day rate independently -- a single
-    'Other' cell very often carries both ('$35 Per Ton $10 Per Day').""" 
+    """Extracts a per-ton, per-day, AND per-week rate independently -- a
+    single 'Other' cell very often carries two of these at once
+    ('$35 Per Ton $10 Per Day', '$60/T, $30/week'). Per-week is kept
+    separate rather than silently divided into a daily rate -- whether a
+    vendor bills that in daily increments or only in full extra weeks is
+    a real billing-behavior question, not something to assume."""
     if raw is None or (isinstance(raw, float) and math.isnan(raw)):
-        return {'ton': None, 'day': None}
+        return {'ton': None, 'day': None, 'week': None}
     s = str(raw)
     ton_m = PER_TON_RE.search(s)
     day_m = PER_DAY_RE.search(s)
+    week_m = PER_WEEK_RE.search(s)
     return {
         'ton': float(ton_m.group(1)) if ton_m else None,
         'day': float(day_m.group(1)) if day_m else None,
+        'week': float(week_m.group(1)) if week_m else None,
     }
 
 
@@ -286,6 +327,17 @@ def convert(xlsx_path):
             no_model_skipped += 1
             continue
         model, model_debris = model_info
+
+        # A Haul + Disposal row whose Haul Rate literally says "Flat
+        # Rate" (not "see container...") isn't really haul+per-ton at
+        # all -- the size cells are priced exactly like a Flat Rate
+        # vendor ("$390/flat/30 Days"), just filed under the wrong model
+        # name. Route it through the flat-price path instead, rather
+        # than into haulRate/perTon fields it doesn't actually have.
+        haul_rate_text = row.get('Haul Rate')
+        if (model == 'haul_plus_disposal' and isinstance(haul_rate_text, str)
+                and 'flat' in haul_rate_text.lower() and 'see container' not in haul_rate_text.lower()):
+            model = 'flat'
 
         state_full = clean(row.get('State'))
         state_abbr = STATE_TO_ABBR.get(state_full, state_full)
@@ -332,8 +384,8 @@ def convert(xlsx_path):
                 rule = {**base, 'debrisType': None,
                         'haulRate': None, 'perTon': None, 'price': None,
                         'rawTons': None, 'rentalDays': None,
-                        'tonOverageRate': None, 'dayOverageRate': None,
-                        'realSizeNote': None}
+                        'tonOverageRate': None, 'dayOverageRate': None, 'weekOverageRate': None,
+                        'realSizeNote': None, 'zoneLabel': None}
                 rule['id'] = f'p{rule_id}'; rule_id += 1
                 rules.append(rule)
                 continue
@@ -350,8 +402,8 @@ def convert(xlsx_path):
                     rule = {**base, 'pricingModel': 'must_call_for_pricing',
                             'debrisType': None, 'haulRate': None, 'perTon': None,
                             'price': None, 'rawTons': None, 'rentalDays': None,
-                            'tonOverageRate': None, 'dayOverageRate': None,
-                            'realSizeNote': parsed.get('realSizeNote')}
+                            'tonOverageRate': None, 'dayOverageRate': None, 'weekOverageRate': None,
+                            'realSizeNote': parsed.get('realSizeNote'), 'zoneLabel': parsed.get('zoneLabel')}
                     rule['id'] = f'p{rule_id}'; rule_id += 1
                     rules.append(rule)
                     continue
@@ -374,8 +426,8 @@ def convert(xlsx_path):
                             'haulRate': haul_rate, 'perTon': per_ton or 0,
                             'price': None, 'rawTons': None,
                             'rentalDays': parsed['days'],
-                            'tonOverageRate': per_ton or 0, 'dayOverageRate': overage['day'],
-                            'realSizeNote': parsed.get('realSizeNote')}
+                            'tonOverageRate': per_ton or 0, 'dayOverageRate': overage['day'], 'weekOverageRate': overage['week'],
+                            'realSizeNote': parsed.get('realSizeNote'), 'zoneLabel': parsed.get('zoneLabel')}
                     rule['id'] = f'p{rule_id}'; rule_id += 1
                     rules.append(rule)
                 continue
@@ -385,6 +437,8 @@ def convert(xlsx_path):
             if parsed is None:
                 skipped.append((state_full, city, vendor, col, raw_val))
                 continue
+            if parsed.get('deliveryOverride') is not None:
+                base = {**base, 'delivery': parsed['deliveryOverride']}
 
             if model_debris is not None:
                 # Pricing-model-driven debris split (Standard Mixed/CnD,
@@ -397,8 +451,8 @@ def convert(xlsx_path):
                         'price': parsed['price'], 'rawTons': parsed['rawTons'],
                         'rentalDays': parsed['days'],
                         'tonOverageRate': None if model == 'flat' else ton_rate,
-                        'dayOverageRate': overage['day'],
-                        'realSizeNote': parsed.get('realSizeNote')}
+                        'dayOverageRate': overage['day'], 'weekOverageRate': overage['week'],
+                        'realSizeNote': parsed.get('realSizeNote'), 'zoneLabel': parsed.get('zoneLabel')}
                 rule['id'] = f'p{rule_id}'; rule_id += 1
                 rules.append(rule)
             else:
@@ -417,8 +471,8 @@ def convert(xlsx_path):
                             'price': parsed['price'], 'rawTons': parsed['rawTons'],
                             'rentalDays': parsed['days'],
                             'tonOverageRate': None if model == 'flat' else ton_rate,
-                            'dayOverageRate': overage['day'],
-                            'realSizeNote': parsed.get('realSizeNote')}
+                            'dayOverageRate': overage['day'], 'weekOverageRate': overage['week'],
+                            'realSizeNote': parsed.get('realSizeNote'), 'zoneLabel': parsed.get('zoneLabel')}
                     rule['id'] = f'p{rule_id}'; rule_id += 1
                     rules.append(rule)
 
