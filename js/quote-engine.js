@@ -32,16 +32,20 @@
      similar cards.
    - No cost/tax/margin breakdown is ever shown to a sales rep — just the
      final numbers.
-   - Three pricing models never produce a price: "must_call_for_pricing"
-     (vendor exists but needs a direct call — treated like "no priced
-     vendor" for match-tier purposes, but still surfaced boldly since a
-     real vendor contact is worth knowing), "franchised" (the city can't
-     be serviced at all — bold "can't help" notice), and
+   - Three pricing models never produce a *confirmed* price: "must_call_for_pricing"
+     shows a suggested quote instead — computed the exact same way as the
+     no-vendor-in-this-city estimate (state-average of real Standard rows
+     for that size, +15%, taxed at the state's highest rate, ÷0.74) — so a
+     rep has a number to quote immediately, with a clear note that it's an
+     estimate and the vendor needs an actual call before the job is
+     invoiced. "franchised" (the city can't be serviced at all — bold
+     "can't help" notice, never a price, since quoting a job we're
+     contractually unable to take would be actively wrong) and
      "do_not_price_quote" (a blacklisted vendor — hidden from sales
-     entirely, visible to admin only as a warning). A single size within
-     an otherwise-priceable Haul + Disposal vendor can also carry its own
-     must-call notice (an "Available — call for pricing" cell) — same
-     treatment, scoped to just that size.
+     entirely, visible to admin only as a warning) still never show a
+     number. A single size within an otherwise-priceable Haul + Disposal
+     vendor can also carry its own must-call notice (an "Available — call
+     for pricing" cell) — same estimate treatment, scoped to just that size.
    - A row with no Pricing Model at all was dropped during data
      conversion — never reaches this engine, same as no vendor existing.
    - When there's no priced vendor in the exact searched city, the site
@@ -183,6 +187,11 @@ function groupForDisplay(items) {
  *  given, but isn't required. Filtered to the selected size (if any) and
  *  deduplicated by vendor so a vendor offering four must-call sizes
  *  doesn't produce four banners when the rep hasn't narrowed by size. */
+/** Same city-matching rule as priced results — state disambiguates when
+ *  given, isn't required. Franchised notices are deduped one per vendor
+ *  (no price ever applies, so repeating per size adds nothing). Must-call
+ *  notices are deduped per vendor+size instead, since each size now
+ *  carries its own suggested price below. */
 function findCityNotices(city, state, size) {
   if (!city) return [];
   let rows = state
@@ -193,12 +202,18 @@ function findCityNotices(city, state, size) {
     rows = rows.filter(r => String(r.size) === String(size));
   }
   const seen = new Set();
-  return rows.filter(r => {
-    const key = r.vendor + '|' + r.pricingModel;
+  const deduped = rows.filter(r => {
+    const key = r.pricingModel === 'franchised'
+      ? r.vendor + '|' + r.pricingModel
+      : r.vendor + '|' + r.pricingModel + '|' + r.size;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
   });
+  return deduped.map(r => ({
+    ...r,
+    estimate: r.pricingModel === 'must_call_for_pricing' ? estimateForSize(r.state, r.size) : null,
+  }));
 }
 
 /** Standard-model rows in a state, one per unique vendor+city+size so a
@@ -214,25 +229,27 @@ function standardRowsForState(state) {
   });
 }
 
-/** State-average estimate per size: average of real Standard-model base
- *  prices in that state, bumped 15%, taxed at the state's highest listed
- *  rate, ÷0.74. No card fee (this isn't a real vendor transaction) and a
- *  flat 7-day rental, since there's no real vendor data to draw a rental
- *  period from. Only returns a size if the state actually has Standard
- *  rows for it -- no data to average means no estimate, rather than a
- *  guess. */
-function stateEstimates(state) {
-  const stateRows = standardRowsForState(state);
-  if (!stateRows.length) return [];
+/** One size's state-average estimate: average of real Standard-model base
+ *  prices in that state for that size, bumped 15%, taxed at the state's
+ *  highest listed rate, ÷0.74. No card fee (this isn't a real vendor
+ *  transaction) and a flat 7-day rental, since there's no real vendor
+ *  data to draw a rental period from. Returns null if the state has no
+ *  Standard rows for that size -- no data to average means no estimate,
+ *  rather than a guess. Backs both the "no vendor in this city at all"
+ *  fallback and the suggested price shown alongside a "must call for
+ *  pricing" vendor -- same algorithm either way, per Dee's call. */
+function estimateForSize(state, size) {
+  const sizeRows = standardRowsForState(state).filter(r => r.size === size && r.price != null);
+  if (!sizeRows.length) return null;
   const highestTax = Math.max(...PRICING_RULES.filter(r => r.state === state).map(r => r.taxRate || 0));
-  return SIZES.map(size => {
-    const sizeRows = stateRows.filter(r => r.size === size && r.price != null);
-    if (!sizeRows.length) return null;
-    const avg = sizeRows.reduce((sum, r) => sum + r.price, 0) / sizeRows.length;
-    const bumped = avg * ESTIMATE_BUMP;
-    const total = (bumped * (1 + highestTax)) / MARGIN_DIVISOR;
-    return { size, total, rentalDays: ESTIMATE_RENTAL_DAYS, sampleSize: sizeRows.length };
-  }).filter(Boolean);
+  const avg = sizeRows.reduce((sum, r) => sum + r.price, 0) / sizeRows.length;
+  const bumped = avg * ESTIMATE_BUMP;
+  const total = (bumped * (1 + highestTax)) / MARGIN_DIVISOR;
+  return { size, total, rentalDays: ESTIMATE_RENTAL_DAYS, sampleSize: sizeRows.length };
+}
+
+function stateEstimates(state) {
+  return SIZES.map(size => estimateForSize(state, size)).filter(Boolean);
 }
 
 /** Best-effort "someone to call and check" suggestion -- name and phone
@@ -309,6 +326,16 @@ export function getQuotes(filters) {
       hasLocation: true, tier: 'city', note,
       results: groupForDisplay(items), cityNotices, estimates: [], callVendors: [],
     };
+  }
+
+  // A "must call for pricing" vendor already carries its own suggested
+  // quote and its own name/number to call -- showing the generic
+  // faceless state estimate and "someone to call" block underneath it
+  // would just repeat the same number and suggest a second, vaguer
+  // vendor to call instead of the specific one already on screen.
+  const hasMustCallNotice = cityNotices.some(n => n.pricingModel === 'must_call_for_pricing');
+  if (hasMustCallNotice) {
+    return { hasLocation: true, tier: 'city', note, results: [], cityNotices, estimates: [], callVendors: [] };
   }
 
   // No priced vendor in the exact city -- a state-average estimate, not

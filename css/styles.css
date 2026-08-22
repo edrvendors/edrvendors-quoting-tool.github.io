@@ -392,6 +392,23 @@ button, input, select {
 }
 .notice-banner--must-call .notice-banner__label { color: var(--caution); }
 
+.notice-banner__quote {
+  margin-top: 8px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--caution);
+  font-size: 1.1rem;
+  font-weight: 800;
+}
+
+.notice-banner__quote-note {
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-muted);
+}
+
 .notice-banner--franchised {
   border: 1px solid var(--alert);
   background: var(--alert-soft);

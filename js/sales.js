@@ -184,11 +184,15 @@ function renderCard(entry) {
 
 function noticeBanner(row) {
   if (row.pricingModel === 'must_call_for_pricing') {
+    const est = row.estimate;
+    const priceLine = est
+      ? `<div class="notice-banner__quote">Suggested quote: ${money(est.total)} <span class="notice-banner__quote-note">(${row.size} yd, ~${est.rentalDays}-day rental — quote this now, call the vendor for the real price before invoicing)</span></div>`
+      : `<div class="notice-banner__quote-note">Not enough Standard-priced vendors in ${row.state} yet to suggest a number for ${row.size} yd — call before quoting.</div>`;
     return `
       <div class="notice-banner notice-banner--must-call">
         <span class="notice-banner__label">Call for pricing</span>
         ${row.vendor}${row.phone ? ' · ' + row.phone : ''} services this area, but every job is priced individually.
-        If you get the sale, call them directly for the actual price before confirming with the customer.
+        ${priceLine}
       </div>`;
   }
   if (row.pricingModel === 'franchised') {
