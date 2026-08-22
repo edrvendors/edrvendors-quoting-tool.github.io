@@ -60,7 +60,7 @@
    ========================================================= */
 
 import {
-  PRICING_RULES, ZIP_TO_LOCATION, STANDARD_TONS_BY_SIZE,
+  PRICING_RULES, ZIP3_TO_STATE, STANDARD_TONS_BY_SIZE,
   MARGIN_DIVISOR, CC_FEE_RATE, ESTIMATE_BUMP, ESTIMATE_RENTAL_DAYS, SIZES,
 } from './data.js';
 
@@ -74,10 +74,25 @@ const NOTICE_MODELS = new Set(['must_call_for_pricing', 'franchised']);
 // selection (any/blank) behaves like "show everything".
 const DATA_BACKED_DEBRIS = new Set(['cnd', 'mixed']);
 
-export function resolveZip(raw) {
+/** Zip matching is direct, not a two-step "zip -> one city -> city
+ *  search": a handful of vendors share the same zip across several small
+ *  towns in one flat-rate coverage group (found while building this --
+ *  the same zip can legitimately belong to several rows with different
+ *  city labels), so picking a single "winning" city would arbitrarily
+ *  drop real, correctly-priced vendors. Instead this returns every row
+ *  whose own zip list contains the searched zip, whatever city each one
+ *  is filed under. Returns null (not []) when zero vendors list this zip
+ *  at all, so the caller can fall through to the state estimate instead
+ *  of showing an empty city match. */
+function rowsForZip(zip) {
+  const rows = PRICING_RULES.filter(r => r.zips && r.zips.includes(zip));
+  return rows.length ? rows : null;
+}
+
+export function resolveZipState(raw) {
   const zip = (raw || '').trim();
   if (!/^\d{5}$/.test(zip)) return null;
-  return ZIP_TO_LOCATION[zip] || null;
+  return ZIP3_TO_STATE[zip.slice(0, 3)] || null;
 }
 
 function includedTons(row) {
@@ -191,24 +206,16 @@ function groupForDisplay(items) {
   });
 }
 
-/** City notices (must-call / franchised, including a single Haul +
- *  Disposal size that's must-call on its own) for the EXACT searched
- *  city. City-only matching works the same as priced results — state is
- *  used to disambiguate same-named cities in different states when
- *  given, but isn't required. Filtered to the selected size (if any) and
- *  deduplicated by vendor so a vendor offering four must-call sizes
- *  doesn't produce four banners when the rep hasn't narrowed by size. */
-/** Same city-matching rule as priced results — state disambiguates when
- *  given, isn't required. Franchised notices are deduped one per vendor
- *  (no price ever applies, so repeating per size adds nothing). Must-call
- *  notices are deduped per vendor+size instead, since each size now
- *  carries its own suggested price below. */
-function findCityNotices(city, state, size) {
-  if (!city) return [];
-  let rows = state
-    ? PRICING_RULES.filter(r => r.city?.toLowerCase() === city.toLowerCase() && r.state === state)
-    : PRICING_RULES.filter(r => r.city?.toLowerCase() === city.toLowerCase());
-  rows = rows.filter(r => NOTICE_MODELS.has(r.pricingModel));
+/** Notices (must-call / franchised, including a single Haul + Disposal
+ *  size that's must-call on its own) drawn from a candidate row pool --
+ *  the same pool used for priced results, whether that came from a
+ *  city/state match or a direct zip match. Filtered to the selected size
+ *  (if any). Franchised notices are deduped one per vendor (no price ever
+ *  applies, so repeating per size adds nothing); must-call notices are
+ *  deduped per vendor+size, since each size carries its own suggested
+ *  price below. */
+function noticesFromRows(candidateRows, size) {
+  let rows = candidateRows.filter(r => NOTICE_MODELS.has(r.pricingModel));
   if (size && size !== 'any') {
     rows = rows.filter(r => String(r.size) === String(size));
   }
@@ -299,40 +306,63 @@ export function getQuotes(filters) {
   const zipEntered = (filters.zipRaw || '').trim();
   const cityState = { city: (filters.cityRaw || '').trim(), state: (filters.stateRaw || '').trim().toUpperCase() };
   const hasCityState = !!(cityState.city || cityState.state);
-
-  let location = cityState;
-  let note = '';
-
-  if (!hasCityState && zipEntered) {
-    const resolved = resolveZip(zipEntered);
-    if (resolved) {
-      location = resolved;
-    } else {
-      note = `Zip search isn\u2019t wired up yet \u2014 try a city and state instead.`;
-    }
-  }
-
   const hasLocation = hasCityState || !!zipEntered;
+
   if (!hasLocation) {
     return { hasLocation: false, tier: null, results: [], note: '', cityNotices: [], estimates: [], callVendors: [] };
   }
 
-  const cityNotices = findCityNotices(location.city, location.state, filters.size);
+  let note = '';
+  let candidateRows;   // every row (any pricing model) "in" this search, before size/debris filtering
+  let fallbackState;   // state to run the estimate tier against if candidateRows has nothing priceable
 
-  const priceableRows = PRICING_RULES.filter(r => PRICEABLE_MODELS.has(r.pricingModel));
-  let cityRows = location.city
-    ? (location.state
-        ? priceableRows.filter(r => r.city?.toLowerCase() === location.city.toLowerCase() && r.state === location.state)
-        : priceableRows.filter(r => r.city?.toLowerCase() === location.city.toLowerCase()))
-    : [];
-
-  if (filters.size && filters.size !== 'any') {
-    cityRows = cityRows.filter(r => String(r.size) === String(filters.size));
+  if (hasCityState) {
+    // City-only matching, same as always -- state disambiguates a
+    // same-named city in another state when given, isn't required.
+    // State alone with no city goes straight to the state estimate,
+    // same as before (a bare state pick was never treated as "show
+    // every vendor in the state" here).
+    candidateRows = cityState.city
+      ? (cityState.state
+          ? PRICING_RULES.filter(r => r.city?.toLowerCase() === cityState.city.toLowerCase() && r.state === cityState.state)
+          : PRICING_RULES.filter(r => r.city?.toLowerCase() === cityState.city.toLowerCase()))
+      : [];
+    fallbackState = cityState.state || null;
+  } else {
+    // Zip search: match directly against every row's own zip list first
+    // (see rowsForZip for why this isn't a two-step "resolve to one
+    // city" lookup). Only when literally no vendor lists this zip does
+    // it fall back to the lightweight zip-prefix -> state table, purely
+    // to know which state's estimate to show.
+    if (!/^\d{5}$/.test(zipEntered)) {
+      note = `That doesn\u2019t look like a valid US zip \u2014 try a city and state instead.`;
+      candidateRows = [];
+      fallbackState = null;
+    } else {
+      const zipRows = rowsForZip(zipEntered);
+      if (zipRows) {
+        candidateRows = zipRows;
+        fallbackState = zipRows[0].state;
+      } else {
+        candidateRows = [];
+        fallbackState = resolveZipState(zipEntered);
+        if (!fallbackState) {
+          note = `${zipEntered} doesn\u2019t match a known US zip prefix \u2014 try a city and state instead.`;
+        }
+      }
+    }
   }
-  cityRows = filterByDebris(cityRows, filters.debrisId);
 
-  if (cityRows.length) {
-    const items = cityRows.map(row => ({ row, price: priceRule(row) }));
+  const cityNotices = noticesFromRows(candidateRows, filters.size);
+
+  let priceableRows = candidateRows.filter(r => PRICEABLE_MODELS.has(r.pricingModel));
+  if (filters.size && filters.size !== 'any') {
+    priceableRows = priceableRows.filter(r => String(r.size) === String(filters.size));
+  }
+  priceableRows = filterByDebris(priceableRows, filters.debrisId);
+
+  if (priceableRows.length) {
+    const items = priceableRows.map(row => ({ row, price: priceRule(row) }));
     return {
       hasLocation: true, tier: 'city', note,
       results: groupForDisplay(items), cityNotices, estimates: [], callVendors: [],
@@ -349,16 +379,16 @@ export function getQuotes(filters) {
     return { hasLocation: true, tier: 'city', note, results: [], cityNotices, estimates: [], callVendors: [] };
   }
 
-  // No priced vendor in the exact city -- a state-average estimate, not
-  // another city's real vendor prices standing in for this one.
-  if (!location.state) {
+  // No priced vendor in the exact city/zip -- a state-average estimate,
+  // not another city's real vendor prices standing in for this one.
+  if (!fallbackState) {
     return { hasLocation: true, tier: 'none', note, results: [], cityNotices, estimates: [], callVendors: [] };
   }
-  let estimates = stateEstimates(location.state);
+  let estimates = stateEstimates(fallbackState);
   if (filters.size && filters.size !== 'any') {
     estimates = estimates.filter(e => String(e.size) === String(filters.size));
   }
-  const callVendors = vendorsToCall(location.state, filters.size);
+  const callVendors = vendorsToCall(fallbackState, filters.size);
 
   return {
     hasLocation: true,
