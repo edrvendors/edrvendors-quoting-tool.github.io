@@ -308,7 +308,7 @@ export function getQuotes(filters) {
     if (resolved) {
       location = resolved;
     } else {
-      note = `Zip ${zipEntered} isn\u2019t in this sample data yet \u2014 try a city and state instead.`;
+      note = `Zip search isn\u2019t wired up yet \u2014 try a city and state instead.`;
     }
   }
 
