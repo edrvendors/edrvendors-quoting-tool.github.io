@@ -33,7 +33,11 @@ function detailLine(row, price) {
 function overageLine(price) {
   const parts = [];
   if (price.tonOverage != null) parts.push(`Extra ton: ${money(price.tonOverage)}`);
-  if (price.dayOverage != null) parts.push(`Extra day: ${money(price.dayOverage)}`);
+  if (price.dayOverage != null) {
+    parts.push(price.dayOverageIsProrated
+      ? `Extra day: ~${money(price.dayOverage)} <span class="prorated-note">(vendor bills weekly — daily estimate)</span>`
+      : `Extra day: ${money(price.dayOverage)}`);
+  }
   return parts.join(' &nbsp;&nbsp; ');
 }
 

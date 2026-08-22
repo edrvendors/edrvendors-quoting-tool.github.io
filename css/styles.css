@@ -638,3 +638,10 @@ button, input, select {
   font-weight: 600;
   text-decoration: underline;
 }
+
+.prorated-note {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--text-muted);
+}

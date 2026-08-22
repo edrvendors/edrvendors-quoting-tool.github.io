@@ -130,7 +130,17 @@ export function priceRule(row, overrideTons = null) {
 
   const tonOverageRaw = row.pricingModel === 'haul_plus_disposal' ? row.perTon : row.tonOverageRate;
   const tonOverage = tonOverageRaw != null ? markup(tonOverageRaw, row, false) : null;
-  const dayOverage = row.dayOverageRate != null ? markup(row.dayOverageRate, row, false) : null;
+
+  // A real per-day rate wins when the vendor has one. Otherwise, for the
+  // ~620 vendors that only list a per-week overage, prorate it to a
+  // daily-equivalent (Dee's call -- reps need *some* number for a job
+  // that runs long, even an approximate one) rather than leaving it
+  // blank. Flagged so the UI can label it as prorated, not the vendor's
+  // literal daily rate.
+  const dayOverageIsProrated = row.dayOverageRate == null && row.weekOverageRate != null;
+  const dayOverageRaw = row.dayOverageRate != null ? row.dayOverageRate
+    : (row.weekOverageRate != null ? row.weekOverageRate / 7 : null);
+  const dayOverage = dayOverageRaw != null ? markup(dayOverageRaw, row, false) : null;
 
   return {
     tons,
@@ -138,6 +148,7 @@ export function priceRule(row, overrideTons = null) {
     total,
     tonOverage,
     dayOverage,
+    dayOverageIsProrated,
     isFlat: row.pricingModel === 'flat',
     isHaulPlusDisposal: row.pricingModel === 'haul_plus_disposal',
   };
