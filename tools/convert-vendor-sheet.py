@@ -50,6 +50,7 @@ Rules applied (confirmed with Dee):
 """
 import sys
 import re
+import os
 import json
 import math
 import pandas as pd
@@ -100,6 +101,15 @@ BARE_HAUL_DOLLAR_DAYS_RE = re.compile(r'^\$\s*([\d,]+(?:\.\d+)?)\s*/\s*(\d+)\s*D
 PER_TON_RE = re.compile(r'\$?\s*([\d.]+)\s*\$?\s*(?:Per\s*Ton|/\s*Ton\b|/\s*T\b)', re.IGNORECASE)
 PER_DAY_RE = re.compile(r'\$?\s*([\d.]+)\s*\$?\s*(?:Per\s*Day|/\s*Day\b|/\s*D\b)', re.IGNORECASE)
 PER_WEEK_RE = re.compile(r'\$?\s*([\d.]+)\s*\$?\s*(?:Per\s*Week|/\s*Week\b|/\s*Wk\b)', re.IGNORECASE)
+# Some vendors write a debris-qualified rate straight into the Other
+# column instead of using the dedicated CnD Waste / Mixed Waste columns
+# ("$35 Per CnD Ton   $50 Per MSW Ton") -- used only as a fallback when
+# those dedicated columns are blank, so a real per-column value always
+# wins over free text.
+CND_TON_IN_OTHER_RE = re.compile(r'\$?\s*([\d.]+)\s*Per\s*(?:CnD|C&D)\s*Ton', re.IGNORECASE)
+MIXED_TON_IN_OTHER_RE = re.compile(r'\$?\s*([\d.]+)\s*Per\s*(?:MSW|HH|Mixed|Household)\s*Ton', re.IGNORECASE)
+ONE_TIME_FLAT_RE = re.compile(r'(?:add\s*)?\$?\s*([\d.]+)\s*one\s*time', re.IGNORECASE)
+ONE_TIME_PCT_RE = re.compile(r'([\d.]+)\s*%', re.IGNORECASE)
 DELIVERY_INLINE_RE = re.compile(r'\$?\s*([\d.]+)\s*(?:a\s*)?del(?:ivery)?\b', re.IGNORECASE)
 DAYS_FLEXIBLE_RE = re.compile(r'(\d+)\s*d(?:ay)?s?\b(?:\s*rental)?', re.IGNORECASE)
 PCT_RE = re.compile(r'([\d.]+)\s*%')
@@ -292,12 +302,41 @@ def parse_overage(raw):
     }
 
 
-def parse_debris_ton_override(raw):
-    """CnD Waste / Mixed Waste columns: '$57 Per Ton' -> 57.0"""
+def parse_debris_ton_override(raw, other_text, other_pattern):
+    """CnD Waste / Mixed Waste columns: '$57 Per Ton' -> 57.0. Falls back
+    to a debris-qualified rate embedded in the Other column ('$35 Per
+    CnD Ton') only when the dedicated column itself is blank -- a real
+    per-column value always wins over free text."""
+    if raw is not None and not (isinstance(raw, float) and math.isnan(raw)):
+        m = PER_TON_RE.search(str(raw))
+        if m:
+            return float(m.group(1))
+    if other_text:
+        m = other_pattern.search(str(other_text))
+        if m:
+            return float(m.group(1))
+    return None
+
+
+def parse_one_time_charge(raw):
+    """'One Time Mixed Charge' / 'One Time CnD Charge' columns -- an
+    adjustment to the BASE price (not a per-ton rate) that applies only
+    for that specific debris type. Returns (flatAmount, percentFraction);
+    at most one is non-zero given the observed formats ('Add $50 one
+    time' / 'Add 17% of base dumpster cost' / '10% of dumpster total
+    cost'). Applied in quote-engine.js at compute time (not baked into
+    the price here), since Haul + Disposal's total depends on the
+    rep-adjustable tons and can't be precomputed once at conversion."""
     if raw is None or (isinstance(raw, float) and math.isnan(raw)):
-        return None
-    m = PER_TON_RE.search(str(raw))
-    return float(m.group(1)) if m else None
+        return (0.0, 0.0)
+    s = str(raw)
+    flat_m = ONE_TIME_FLAT_RE.search(s)
+    if flat_m:
+        return (float(flat_m.group(1)), 0.0)
+    pct_m = ONE_TIME_PCT_RE.search(s)
+    if pct_m:
+        return (0.0, float(pct_m.group(1)) / 100.0)
+    return (0.0, 0.0)
 
 
 def parse_zips(raw):
@@ -364,11 +403,25 @@ def convert(xlsx_path):
         fuel_flat, fuel_percent = parse_fuel_surcharge(row.get('Fuel Surcharge'))
         tax_rate = as_number(row.get('Sales Tax Rate')) or 0
         overage = parse_overage(row.get('Other'))
-        cnd_override = parse_debris_ton_override(row.get('CnD Waste'))
-        mixed_override = parse_debris_ton_override(row.get('Mixed Waste'))
+        other_text = row.get('Other')
+        cnd_override = parse_debris_ton_override(row.get('CnD Waste'), other_text, CND_TON_IN_OTHER_RE)
+        mixed_override = parse_debris_ton_override(row.get('Mixed Waste'), other_text, MIXED_TON_IN_OTHER_RE)
+        one_time_mixed_flat, one_time_mixed_pct = parse_one_time_charge(row.get('One Time Mixed Charge'))
+        one_time_cnd_flat, one_time_cnd_pct = parse_one_time_charge(row.get('One Time CnD Charge'))
         shared_haul_rate = as_number(row.get('Haul Rate'))
         shared_ton_rate = as_number(row.get('Tonnage Rate'))
         zips = parse_zips(row.get('Zipcodes by City'))
+
+        def charge_fields_for(debris_type):
+            """One-time base-price adjustment fields for a given debris
+            variant -- applied at compute time in quote-engine.js, not
+            baked in here, so it works correctly even for Haul + Disposal
+            rows where the total depends on rep-adjustable tons."""
+            if debris_type == 'mixed':
+                return {'oneTimeFlat': one_time_mixed_flat or 0, 'oneTimePercent': one_time_mixed_pct or 0}
+            if debris_type == 'cnd':
+                return {'oneTimeFlat': one_time_cnd_flat or 0, 'oneTimePercent': one_time_cnd_pct or 0}
+            return {'oneTimeFlat': 0, 'oneTimePercent': 0}
         # Per-size mode is signaled either by the Haul Rate column being
         # text ("See container size rate" / "see container pricing rate" /
         # etc, all non-numeric) or by the old explicit "...Commercial -
@@ -403,7 +456,7 @@ def convert(xlsx_path):
                         'haulRate': None, 'perTon': None, 'price': None,
                         'rawTons': None, 'rentalDays': None,
                         'tonOverageRate': None, 'dayOverageRate': None, 'weekOverageRate': None,
-                        'realSizeNote': None, 'zoneLabel': None}
+                        'realSizeNote': None, 'zoneLabel': None, 'oneTimeFlat': 0, 'oneTimePercent': 0}
                 rule['id'] = f'p{rule_id}'; rule_id += 1
                 rules.append(rule)
                 continue
@@ -421,7 +474,7 @@ def convert(xlsx_path):
                             'debrisType': None, 'haulRate': None, 'perTon': None,
                             'price': None, 'rawTons': None, 'rentalDays': None,
                             'tonOverageRate': None, 'dayOverageRate': None, 'weekOverageRate': None,
-                            'realSizeNote': parsed.get('realSizeNote'), 'zoneLabel': parsed.get('zoneLabel')}
+                            'realSizeNote': parsed.get('realSizeNote'), 'zoneLabel': parsed.get('zoneLabel'), 'oneTimeFlat': 0, 'oneTimePercent': 0}
                     rule['id'] = f'p{rule_id}'; rule_id += 1
                     rules.append(rule)
                     continue
@@ -437,15 +490,34 @@ def convert(xlsx_path):
                 variants = [(None, base_ton_rate)]
                 if cnd_override is not None:
                     variants.append(('cnd', cnd_override))
+                elif one_time_cnd_flat or one_time_cnd_pct:
+                    variants.append(('cnd', base_ton_rate))
                 if mixed_override is not None:
                     variants.append(('mixed', mixed_override))
+                elif one_time_mixed_flat or one_time_mixed_pct:
+                    variants.append(('mixed', base_ton_rate))
                 for debris_type, per_ton in variants:
+                    if per_ton is None:
+                        # Genuinely no per-ton rate anywhere (not "Flat" --
+                        # actually blank) -- Haul + Disposal's whole price
+                        # is haulRate + perTon*tons, so this can't be
+                        # priced at all without it. A previous version of
+                        # this script used "per_ton or 0" here, which
+                        # silently turned "we don't know" into "confirmed
+                        # $0" -- a real bug (found via Rocky Mountain Roll
+                        # Off, though that one turned out to be a genuine
+                        # $0/Flat case; 400 other rows across 19 vendors
+                        # were true unknowns wrongly shown as $0). Skip
+                        # rather than show an understated price.
+                        skipped.append((state_full, city, vendor, col, f'{raw_val} [no ton rate on file]'))
+                        continue
                     rule = {**base, 'debrisType': debris_type,
-                            'haulRate': haul_rate, 'perTon': per_ton or 0,
+                            'haulRate': haul_rate, 'perTon': per_ton,
                             'price': None, 'rawTons': None,
                             'rentalDays': parsed['days'],
-                            'tonOverageRate': per_ton or 0, 'dayOverageRate': overage['day'], 'weekOverageRate': overage['week'],
-                            'realSizeNote': parsed.get('realSizeNote'), 'zoneLabel': parsed.get('zoneLabel')}
+                            'tonOverageRate': per_ton, 'dayOverageRate': overage['day'], 'weekOverageRate': overage['week'],
+                            'realSizeNote': parsed.get('realSizeNote'), 'zoneLabel': parsed.get('zoneLabel'),
+                            **charge_fields_for(debris_type)}
                     rule['id'] = f'p{rule_id}'; rule_id += 1
                     rules.append(rule)
                 continue
@@ -470,27 +542,41 @@ def convert(xlsx_path):
                         'rentalDays': parsed['days'],
                         'tonOverageRate': None if model == 'flat' else ton_rate,
                         'dayOverageRate': overage['day'], 'weekOverageRate': overage['week'],
-                        'realSizeNote': parsed.get('realSizeNote'), 'zoneLabel': parsed.get('zoneLabel')}
+                        'realSizeNote': parsed.get('realSizeNote'), 'zoneLabel': parsed.get('zoneLabel'),
+                        **charge_fields_for(model_debris)}
                 rule['id'] = f'p{rule_id}'; rule_id += 1
                 rules.append(rule)
             else:
                 # Generic Standard/Flat row -- may still split via CnD
                 # Waste / Mixed Waste override columns (Standard only;
-                # these columns are never populated for Flat Rate rows).
+                # these columns are never populated for Flat Rate rows),
+                # and/or a "One Time Mixed/CnD Charge" -- an addition to
+                # the BASE price (not a ton rate) applied at compute time
+                # in quote-engine.js, not baked in here. If a dedicated
+                # ton-rate override exists AND a one-time charge also
+                # exists, both apply together; if only the one-time
+                # charge exists, that variant still uses the generic ton
+                # rate.
+                base_price = parsed['price']
                 variants = [(None, overage['ton'])]
                 if model == 'standard':
                     if cnd_override is not None:
                         variants.append(('cnd', cnd_override))
+                    elif one_time_cnd_flat or one_time_cnd_pct:
+                        variants.append(('cnd', overage['ton']))
                     if mixed_override is not None:
                         variants.append(('mixed', mixed_override))
+                    elif one_time_mixed_flat or one_time_mixed_pct:
+                        variants.append(('mixed', overage['ton']))
                 for debris_type, ton_rate in variants:
                     rule = {**base, 'debrisType': debris_type,
                             'haulRate': None, 'perTon': None,
-                            'price': parsed['price'], 'rawTons': parsed['rawTons'],
+                            'price': base_price, 'rawTons': parsed['rawTons'],
                             'rentalDays': parsed['days'],
                             'tonOverageRate': None if model == 'flat' else ton_rate,
                             'dayOverageRate': overage['day'], 'weekOverageRate': overage['week'],
-                            'realSizeNote': parsed.get('realSizeNote'), 'zoneLabel': parsed.get('zoneLabel')}
+                            'realSizeNote': parsed.get('realSizeNote'), 'zoneLabel': parsed.get('zoneLabel'),
+                            **charge_fields_for(debris_type)}
                     rule['id'] = f'p{rule_id}'; rule_id += 1
                     rules.append(rule)
 
@@ -539,15 +625,36 @@ export const CC_FEE_RATE = 0.035;
 export const ESTIMATE_BUMP = 1.15;
 export const ESTIMATE_RENTAL_DAYS = 7;
 
-export const PRICING_RULES = '''
-    # Minified on purpose -- at 50k+ rules, pretty-printing roughly
-    # doubled the file size for zero benefit (nobody reads data.js by
-    # eye; use the admin search UI or re-run this script against a row
-    # range instead).
-    body = json.dumps(rules, separators=(',', ':'))
-    footer = ';\n'
+'''
+    # PRICING_RULES is split across several data-partN.js files rather
+    # than living in data.js itself. Not a performance change -- the
+    # browser still loads the same total bytes -- purely so each
+    # individual file stays under GitHub's 25MB drag-and-drop upload
+    # limit, since that's Dee's actual deployment method. Each part just
+    # exports its own slice; data.js imports and concatenates them, so
+    # nothing else in the site (or Dee's workflow beyond dragging in a
+    # few files instead of one) needs to change. Re-split automatically
+    # every run, so this keeps working as the data set keeps growing.
+    PART_COUNT = 4
+    n = len(rules)
+    chunk = math.ceil(n / PART_COUNT) if n else 0
+    out_dir = os.path.dirname(out_path)
+    imports = []
+    combine = []
+    for i in range(PART_COUNT):
+        part_rules = rules[i * chunk:(i + 1) * chunk]
+        part_name = f'data-part{i + 1}.js'
+        part_path = os.path.join(out_dir, part_name)
+        part_body = json.dumps(part_rules, separators=(',', ':'))
+        with open(part_path, 'w') as f:
+            f.write(f'export const PRICING_RULES_PART_{i + 1} = {part_body};\n')
+        imports.append(f"import {{ PRICING_RULES_PART_{i + 1} }} from './{part_name}';")
+        combine.append(f'...PRICING_RULES_PART_{i + 1}')
+
+    header = '\n'.join(imports) + '\n\n' + header
+    footer = f"export const PRICING_RULES = [{', '.join(combine)}];\n"
     with open(out_path, 'w') as f:
-        f.write(header + body + footer)
+        f.write(header + footer)
 
 
 if __name__ == '__main__':

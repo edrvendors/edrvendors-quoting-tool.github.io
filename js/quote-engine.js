@@ -140,6 +140,15 @@ export function priceRule(row, overrideTons = null) {
   } else {
     basePrice = row.price || 0;
   }
+  // A "One Time Mixed/CnD Charge" adjusts the base price itself for that
+  // one debris variant -- computed here (not baked in at conversion time)
+  // so it's correct even for Haul + Disposal, where the base price
+  // changes live as the rep adjusts tons.
+  if (row.oneTimePercent) {
+    basePrice *= (1 + row.oneTimePercent);
+  } else if (row.oneTimeFlat) {
+    basePrice += row.oneTimeFlat;
+  }
 
   const total = markup(basePrice, row, true);
 
@@ -250,12 +259,18 @@ function standardRowsForState(state) {
 /** One size's state-average estimate: average of real Standard-model base
  *  prices in that state for that size, bumped 15%, taxed at the state's
  *  highest listed rate, ÷0.74. No card fee (this isn't a real vendor
- *  transaction) and a flat 7-day rental, since there's no real vendor
- *  data to draw a rental period from. Returns null if the state has no
- *  Standard rows for that size -- no data to average means no estimate,
- *  rather than a guess. Backs both the "no vendor in this city at all"
- *  fallback and the suggested price shown alongside a "must call for
- *  pricing" vendor -- same algorithm either way, per Dee's call. */
+ *  transaction). Also estimates a ton-overage rate the same way (average
+ *  of real rows that actually have one, same bump+tax+margin treatment,
+ *  since it's still a dollar figure being quoted) and a rental period
+ *  (a plain average of real rows' rental days, rounded down -- a day
+ *  count isn't a price, so no bump/tax/margin applies, and rounding down
+ *  is the conservative direction: better to undersell the rental window
+ *  than promise more days than a real vendor might actually give).
+ *  Returns null if the state has no Standard rows for that size at all --
+ *  no data to average means no estimate, rather than a guess. Backs both
+ *  the "no vendor in this city at all" fallback and the suggested price
+ *  shown alongside a "must call for pricing" vendor -- same algorithm
+ *  either way, per Dee's call. */
 function estimateForSize(state, size) {
   const sizeRows = standardRowsForState(state).filter(r => r.size === size && r.price != null);
   if (!sizeRows.length) return null;
@@ -263,7 +278,19 @@ function estimateForSize(state, size) {
   const avg = sizeRows.reduce((sum, r) => sum + r.price, 0) / sizeRows.length;
   const bumped = avg * ESTIMATE_BUMP;
   const total = (bumped * (1 + highestTax)) / MARGIN_DIVISOR;
-  return { size, total, rentalDays: ESTIMATE_RENTAL_DAYS, sampleSize: sizeRows.length };
+
+  const tonRows = sizeRows.filter(r => r.tonOverageRate != null);
+  let tonOverage = null;
+  if (tonRows.length) {
+    const tonAvg = tonRows.reduce((sum, r) => sum + r.tonOverageRate, 0) / tonRows.length;
+    tonOverage = (tonAvg * ESTIMATE_BUMP * (1 + highestTax)) / MARGIN_DIVISOR;
+  }
+
+  const dayRows = sizeRows.filter(r => r.rentalDays != null);
+  const rentalDays = dayRows.length
+    ? Math.floor(dayRows.reduce((sum, r) => sum + r.rentalDays, 0) / dayRows.length)
+    : ESTIMATE_RENTAL_DAYS;
+  return { size, total, tonOverage, rentalDays, sampleSize: sizeRows.length };
 }
 
 function stateEstimates(state) {

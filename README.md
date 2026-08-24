@@ -7,7 +7,8 @@ Plain HTML/CSS/JS site for quoting dumpster/roll-off jobs — no build step, dro
 - `sales.html`, `admin.html` — the two main pages
 - `add-vendor.html`, `update-vendor.html` — vendor request forms (submit via Formspree)
 - `css/styles.css` — all styling
-- `js/data.js` — vendor data, generated from the Excel sheet (see below) — don't hand-edit, it gets overwritten every time the converter runs
+- `js/data.js` — small loader that imports and combines `js/data-part1.js` through `data-part4.js` into `PRICING_RULES`, plus the other small constants (sizes, debris types, formula constants). Vendor data itself lives in the `data-partN.js` files. None of these should be hand-edited — they're all regenerated together every time the converter runs.
+- `js/data-part1.js` … `data-part4.js` — the actual vendor pricing data, split into pieces purely so each individual file stays under GitHub's 25MB browser-upload limit (not a performance change — the site still loads the same total data either way). When uploading a new data export through GitHub's web UI, drag in `data.js` and all four `data-partN.js` files together; they're generated as a set.
 - `js/quote-engine.js` — location matching and pricing logic
 - `js/sales.js`, `js/admin.js` — the two main pages' controllers
 - `js/vendor-request.js` — shared form-submission handling for Add/Update Vendor
@@ -19,6 +20,8 @@ Whenever there's a new version of the Master Sheet, run:
 ```
 python3 tools/convert-vendor-sheet.py path/to/MasterSheet.xlsx js/data.js
 ```
+
+This writes `js/data.js` plus `js/data-part1.js` through `data-part4.js` alongside it — all five need to be uploaded together.
 
 Built against the real Master Sheet's column layout: `State, City, 10 yard,
 15 yard, 20 yard, 30 yard, 40 yd, Pricing Model, Haul Rate, Tonnage Rate,

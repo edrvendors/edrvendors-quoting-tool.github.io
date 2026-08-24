@@ -25,14 +25,22 @@ function currentFilters() {
 
 function detailLine(row, price) {
   const parts = [];
-  if (!price.isFlat && price.tons != null) parts.push(`Includes ${price.tons} ton${price.tons === 1 ? '' : 's'}`);
+  if (price.isFlat) {
+    parts.push('Flat rate — all tonnage included');
+  } else if (price.tons != null) {
+    parts.push(`Includes ${price.tons} ton${price.tons === 1 ? '' : 's'}`);
+  }
   parts.push(price.rentalDays != null ? `${price.rentalDays} day rental` : 'Rental period: confirm with vendor');
   return parts.join(' · ');
 }
 
 function overageLine(price) {
   const parts = [];
-  if (price.tonOverage != null) parts.push(`Extra ton: ${money(price.tonOverage)}`);
+  if (price.tonOverage === 0) {
+    parts.push('No extra charge for tonnage — included in the price');
+  } else if (price.tonOverage != null) {
+    parts.push(`Extra ton: ${money(price.tonOverage)}`);
+  }
   if (price.dayOverage != null) {
     parts.push(price.dayOverageIsProrated
       ? `Extra day: ~${money(price.dayOverage)} <span class="prorated-note">(vendor bills weekly — daily estimate)</span>`
@@ -190,7 +198,8 @@ function noticeBanner(row) {
   if (row.pricingModel === 'must_call_for_pricing') {
     const est = row.estimate;
     const priceLine = est
-      ? `<div class="notice-banner__quote">Suggested quote: ${money(est.total)} <span class="notice-banner__quote-note">(${row.size} yd, ~${est.rentalDays}-day rental — quote this now, call the vendor for the real price before invoicing)</span></div>`
+      ? `<div class="notice-banner__quote">Suggested quote: ${money(est.total)} <span class="notice-banner__quote-note">(${row.size} yd, ~${est.rentalDays}-day rental — quote this now, call the vendor for the real price before invoicing)</span></div>
+         <div class="result-detail-row">${est.tonOverage != null ? `Extra ton (estimated): ${money(est.tonOverage)}` : 'No state-average ton rate available yet'}</div>`
       : `<div class="notice-banner__quote-note">Not enough Standard-priced vendors in ${row.state} yet to suggest a number for ${row.size} yd — call before quoting.</div>`;
     return `
       <div class="notice-banner notice-banner--must-call">
@@ -223,6 +232,7 @@ function estimateCard(estimate) {
       <div class="result-total">${money(estimate.total)}</div>
     </div>
     <div class="result-detail-row">${estimate.rentalDays} day rental (typical) · based on the state average, not a specific vendor</div>
+    ${estimate.tonOverage != null ? `<div class="result-detail-row">Extra ton (estimated): ${money(estimate.tonOverage)}</div>` : ''}
   `;
   return card;
 }
