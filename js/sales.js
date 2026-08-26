@@ -1,5 +1,5 @@
 import { DEBRIS_TYPES } from './data.js';
-import { getQuotes, priceRule, money } from './quote-engine.js';
+import { getQuotes, priceRule, money, citySuggestions } from './quote-engine.js';
 
 const DEBRIS_NAME = Object.fromEntries(DEBRIS_TYPES.map(d => [d.id, d.name]));
 
@@ -72,12 +72,66 @@ function addVendorLink(city, state) {
   return `<a class="text-link" href="${href}">+ Add a vendor for this area</a>`;
 }
 
+function stripHtml(html) {
+  return html.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim();
+}
+
+/** Plain-text block a rep can paste straight into a customer email or
+ *  text -- price, tonnage/rental period, overage, vendor + phone. */
+function buildCopyText(row, price) {
+  const lines = [`${row.size} yd \u2014 ${money(price.total)}`];
+  lines.push(stripHtml(detailLine(row, price)));
+  const overage = overageLine(price);
+  if (overage) lines.push(stripHtml(overage));
+  if (row.vendor) lines.push(`${row.vendor}${row.phone ? ' \u00b7 ' + row.phone : ''}`);
+  return lines.join('\n');
+}
+
+function flagPriceHref(row) {
+  const params = new URLSearchParams();
+  if (row.vendor) params.set('vendor', row.vendor);
+  if (row.city) params.set('city', row.city);
+  if (row.state) params.set('state', row.state);
+  if (row.size != null) params.set('size', row.size);
+  return `update-vendor.html?${params.toString()}`;
+}
+
+function cardActionsHtml() {
+  return `
+    <div class="card-actions">
+      <button type="button" class="icon-btn" data-copy-btn>Copy for email</button>
+      <a class="flag-link" data-flag-link target="_blank" rel="noopener">Something look off? Flag this price</a>
+    </div>
+  `;
+}
+
+/** Wires the actions row built by cardActionsHtml(). getPrice is a
+ *  function (not a static value) so the Haul + Disposal tonnage stepper
+ *  can keep the copy button in sync with whatever's currently on screen. */
+function wireCardActions(el, row, getPrice) {
+  const flagEl = el.querySelector('[data-flag-link]');
+  if (flagEl) flagEl.href = flagPriceHref(row);
+  const copyBtn = el.querySelector('[data-copy-btn]');
+  if (!copyBtn) return;
+  const originalLabel = copyBtn.textContent;
+  copyBtn.addEventListener('click', () => {
+    navigator.clipboard.writeText(buildCopyText(row, getPrice())).then(() => {
+      copyBtn.textContent = 'Copied!';
+      setTimeout(() => { copyBtn.textContent = originalLabel; }, 1500);
+    }).catch(() => {
+      copyBtn.textContent = 'Copy failed \u2014 select manually';
+      setTimeout(() => { copyBtn.textContent = originalLabel; }, 2000);
+    });
+  });
+}
+
 /** Renders one priced line — a full single-vendor card body, or one
  *  variant's slice within a grouped multi-debris card. */
 function buildPriceBlock(row, price, { withTotalHeader }) {
   const el = document.createElement('div');
   el.className = 'price-block';
   const overage = overageLine(price);
+  let currentPrice = price;
 
   const totalHeader = withTotalHeader ? `
     <div class="price-block__top">
@@ -100,6 +154,7 @@ function buildPriceBlock(row, price, { withTotalHeader }) {
         </div>
       </div>
     ` : ''}
+    ${cardActionsHtml()}
   `;
 
   if (price.isHaulPlusDisposal) {
@@ -112,12 +167,15 @@ function buildPriceBlock(row, price, { withTotalHeader }) {
         const delta = btn.dataset.action === 'plus' ? 1 : -1;
         tons = Math.max(0, tons + delta);
         const newPrice = priceRule(row, tons);
+        currentPrice = newPrice;
         if (totalEl) totalEl.textContent = money(newPrice.total);
         detailEl.textContent = detailLine(row, newPrice);
         tonsDisplayEl.textContent = `${tons} ton${tons === 1 ? '' : 's'}`;
       });
     });
   }
+
+  wireCardActions(el, row, () => currentPrice);
 
   return el;
 }
@@ -131,6 +189,7 @@ function renderCard(entry) {
 
   if (entry.single) {
     const { row, price } = entry.single;
+    let currentPrice = price;
     card.innerHTML = `
       <div class="result-top">
         <div>
@@ -153,6 +212,7 @@ function renderCard(entry) {
           </div>
         </div>
       ` : ''}
+      ${cardActionsHtml()}
     `;
     if (price.isHaulPlusDisposal) {
       let tons = price.tons;
@@ -164,12 +224,14 @@ function renderCard(entry) {
           const delta = btn.dataset.action === 'plus' ? 1 : -1;
           tons = Math.max(0, tons + delta);
           const newPrice = priceRule(row, tons);
+          currentPrice = newPrice;
           totalEl.textContent = money(newPrice.total);
           detailEl.textContent = detailLine(row, newPrice);
           tonsDisplayEl.textContent = `${tons} ton${tons === 1 ? '' : 's'}`;
         });
       });
     }
+    wireCardActions(card, row, () => currentPrice);
     return card;
   }
 
@@ -249,8 +311,36 @@ function callVendorCard(vendors, city, state) {
   return card;
 }
 
+/** Clickable "did you mean X?" suggestions shown when the typed city
+ *  matched zero rows at all -- built with DOM methods rather than
+ *  innerHTML since cityRaw is whatever the rep just typed. */
+function didYouMeanBlock(suggestions, cityRaw) {
+  const wrap = document.createElement('div');
+  wrap.className = 'did-you-mean';
+  const label = document.createElement('div');
+  label.textContent = `Didn't find "${cityRaw}" — did you mean:`;
+  wrap.appendChild(label);
+  const chips = document.createElement('div');
+  chips.className = 'did-you-mean__chips';
+  suggestions.forEach(s => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'did-you-mean__chip';
+    btn.textContent = s.states.length === 1 ? `${s.city}, ${s.states[0]}` : s.city;
+    btn.addEventListener('click', () => {
+      document.getElementById('city').value = s.city;
+      if (s.states.length === 1) document.getElementById('state').value = s.states[0];
+      render(getQuotes(currentFilters()));
+    });
+    chips.appendChild(btn);
+  });
+  wrap.appendChild(chips);
+  return wrap;
+}
+
 function render(data) {
   resultsEl.innerHTML = '';
+  const filters = currentFilters();
 
   if (!data.hasLocation) {
     resultsEl.innerHTML = `<div class="empty-state">Enter a zip or city/state above, then get pricing.</div>`;
@@ -266,7 +356,9 @@ function render(data) {
     resultsEl.appendChild(noteEl);
   }
 
-  const filters = currentFilters();
+  if (data.didYouMean && data.didYouMean.length) {
+    resultsEl.appendChild(didYouMeanBlock(data.didYouMean, filters.cityRaw));
+  }
 
   if (data.tier === 'city') {
     data.results.forEach(entry => resultsEl.appendChild(renderCard(entry)));
@@ -302,4 +394,43 @@ document.getElementById('search-btn').addEventListener('click', () => render(get
   document.getElementById(id).addEventListener('keydown', e => {
     if (e.key === 'Enter') render(getQuotes(currentFilters()));
   });
+});
+
+// ---------- Typo-tolerant city search: live as-you-type dropdown ----------
+const cityInput = document.getElementById('city');
+const stateSelect = document.getElementById('state');
+const citySuggestBox = document.getElementById('city-suggest');
+
+function renderCitySuggestions() {
+  const matches = cityInput.value.trim().length >= 2
+    ? citySuggestions(cityInput.value, stateSelect.value || null, 6)
+    : [];
+  citySuggestBox.innerHTML = '';
+  if (!matches.length) { citySuggestBox.hidden = true; return; }
+  matches.forEach(s => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = s.states.length === 1 ? `${s.city}, ${s.states[0]}` : s.city;
+    btn.addEventListener('click', () => {
+      cityInput.value = s.city;
+      if (s.states.length === 1) stateSelect.value = s.states[0];
+      citySuggestBox.hidden = true;
+      render(getQuotes(currentFilters()));
+    });
+    citySuggestBox.appendChild(btn);
+  });
+  citySuggestBox.hidden = false;
+}
+
+let suggestDebounce = null;
+cityInput.addEventListener('input', () => {
+  clearTimeout(suggestDebounce);
+  suggestDebounce = setTimeout(renderCitySuggestions, 180);
+});
+cityInput.addEventListener('focus', () => {
+  if (citySuggestBox.innerHTML) citySuggestBox.hidden = false;
+});
+cityInput.addEventListener('blur', () => {
+  // Delayed so a click on a suggestion registers before the list is hidden.
+  setTimeout(() => { citySuggestBox.hidden = true; }, 150);
 });

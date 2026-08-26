@@ -7,13 +7,32 @@
 const form = document.querySelector('form[data-vendor-form]');
 
 if (form) {
+  const params = new URLSearchParams(location.search);
+  const notesEl = form.querySelector('textarea[name="Notes"]');
+
   // Linked from Sales' "no vendor for this area" prompt as
   // add-vendor.html?area=City,%20ST — prefill the Notes field so whoever
   // fills this out doesn't have to retype the location.
-  const areaParam = new URLSearchParams(location.search).get('area');
-  const notesEl = form.querySelector('textarea[name="Notes"]');
+  const areaParam = params.get('area');
   if (areaParam && notesEl && !notesEl.value) {
     notesEl.value = `Area needed: ${areaParam}\n`;
+  }
+
+  // Linked from Sales' "Flag this price" link on a quote as
+  // update-vendor.html?vendor=Name&city=City&state=ST&size=20 — prefill
+  // the vendor name, note the location/size, and check "Pricing" so the
+  // rep doesn't have to type any of it themselves.
+  const vendorParam = params.get('vendor');
+  const vendorNameEl = form.querySelector('input[name="Vendor name"]');
+  if (vendorParam && vendorNameEl && !vendorNameEl.value) {
+    vendorNameEl.value = vendorParam;
+    const area = [params.get('city'), params.get('state')].filter(Boolean).join(', ');
+    const sizeParam = params.get('size');
+    if (notesEl && !notesEl.value) {
+      notesEl.value = `Flagged from a sales quote${sizeParam ? ` (${sizeParam} yd)` : ''}${area ? ` in ${area}` : ''} — the price shown looked off. Please review.\n`;
+    }
+    const pricingCheckbox = form.querySelector('input[value="Pricing"]');
+    if (pricingCheckbox) pricingCheckbox.checked = true;
   }
 
   const panel = form.closest('.panel');

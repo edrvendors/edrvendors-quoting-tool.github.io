@@ -41,6 +41,19 @@ function rawPricingDetail(row) {
   return `<div>Base price: <b>${money(row.price)}</b></div>${tonsLine}`;
 }
 
+/** Flags known-shaky data patterns directly on the admin card, rather
+ *  than making Dee cross-reference the master-sheet issue list by hand. */
+function dataQualityBadges(row) {
+  const flags = [];
+  if (row.pricingModel === 'standard' && row.tonOverageRate == null) {
+    flags.push('No ton overage on file');
+  }
+  if (row.pricingModel === 'haul_plus_disposal' && (row.haulRate == null || row.perTon == null)) {
+    flags.push('Missing haul/ton rate');
+  }
+  return flags.map(f => `<span class="badge--caution">${f}</span>`).join(' ');
+}
+
 function render(results) {
   resultsEl.innerHTML = '';
 
@@ -56,12 +69,13 @@ function render(results) {
     const debrisNote = row.debrisType ? ` · ${DEBRIS_NAME[row.debrisType] || row.debrisType}` : '';
     const dnqBadge = row.pricingModel === 'do_not_price_quote'
       ? '<span class="badge--alert">Do not price quote</span>' : '';
+    const qualityBadges = dataQualityBadges(row);
     const rawDetail = rawPricingDetail(row);
 
     card.innerHTML = `
       <div class="result-top">
         <div>
-          <div class="result-size">${row.size} yd ${dnqBadge}</div>
+          <div class="result-size">${row.size} yd ${dnqBadge} ${qualityBadges}</div>
           <div class="result-vendor">${row.vendor}${row.phone ? ' · ' + row.phone : ''}</div>
           <div class="result-city-note">${row.city}, ${row.state} · ${modelLabel}${debrisNote}</div>
         </div>

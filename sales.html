@@ -26,9 +26,10 @@
 
   <div class="panel">
     <div class="field-grid">
-      <div class="field">
+      <div class="field field--city">
         <label for="city">City</label>
-        <input id="city" type="text" placeholder="e.g. Gainesville">
+        <input id="city" type="text" placeholder="e.g. Gainesville" autocomplete="off">
+        <div id="city-suggest" class="city-suggest" hidden></div>
       </div>
       <div class="field">
         <label for="state">State</label>

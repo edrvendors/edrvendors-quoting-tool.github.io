@@ -89,6 +89,69 @@ function rowsForZip(zip) {
   return rows.length ? rows : null;
 }
 
+// ---------- Typo-tolerant city matching ----------
+// Built once from PRICING_RULES and cached -- used both for the live
+// as-you-type dropdown and the post-search "did you mean" fallback, so a
+// misspelled or half-typed city doesn't just silently fall through to a
+// generic state estimate.
+let _cityIndex = null;
+function cityIndex() {
+  if (_cityIndex) return _cityIndex;
+  const map = new Map();
+  for (const r of PRICING_RULES) {
+    if (!r.city) continue;
+    const key = r.city.toLowerCase();
+    if (!map.has(key)) map.set(key, { city: r.city, states: new Set() });
+    if (r.state) map.get(key).states.add(r.state);
+  }
+  _cityIndex = [...map.values()].map(v => ({ city: v.city, states: [...v.states] }));
+  return _cityIndex;
+}
+
+function levenshtein(a, b) {
+  const m = a.length, n = b.length;
+  if (!m) return n;
+  if (!n) return m;
+  const dp = new Array(n + 1);
+  for (let j = 0; j <= n; j++) dp[j] = j;
+  for (let i = 1; i <= m; i++) {
+    let prev = dp[0];
+    dp[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const tmp = dp[j];
+      dp[j] = a[i - 1] === b[j - 1] ? prev : 1 + Math.min(prev, dp[j], dp[j - 1]);
+      prev = tmp;
+    }
+  }
+  return dp[n];
+}
+
+/** Prefix matches (rep just hasn't finished typing) always win over fuzzy
+ *  ones; fuzzy matches only fill remaining slots, scored by edit distance
+ *  relative to the city's own length so a short name isn't swamped by
+ *  loose matches. `state`, if given, narrows the pool first. */
+export function citySuggestions(query, state, limit = 5) {
+  const q = (query || '').trim().toLowerCase();
+  if (q.length < 2) return [];
+  let pool = cityIndex();
+  if (state) pool = pool.filter(c => c.states.includes(state));
+
+  const seen = new Set();
+  const results = [];
+  for (const c of pool) {
+    if (c.city.toLowerCase().startsWith(q)) { results.push({ ...c, dist: 0 }); seen.add(c.city); }
+  }
+  if (results.length < limit) {
+    for (const c of pool) {
+      if (seen.has(c.city)) continue;
+      const dist = levenshtein(q, c.city.toLowerCase());
+      if (dist <= Math.max(1, Math.floor(c.city.length / 3))) results.push({ ...c, dist });
+    }
+  }
+  results.sort((a, b) => a.dist - b.dist || a.city.localeCompare(b.city));
+  return results.slice(0, limit);
+}
+
 export function resolveZipState(raw) {
   const zip = (raw || '').trim();
   if (!/^\d{5}$/.test(zip)) return null;
@@ -215,6 +278,17 @@ function groupForDisplay(items) {
   });
 }
 
+/** Highest price first, cheapest last -- Dee's call, so a rep sees the
+ *  top of the range before the bottom. A grouped (multi-debris) card has
+ *  no single total of its own, so it sorts by its highest-priced variant. */
+function sortByPriceDesc(results) {
+  const keyOf = (entry) => entry.single
+    ? entry.single.price.total
+    : Math.max(...entry.variants.map(v => v.price.total));
+  results.sort((a, b) => keyOf(b) - keyOf(a));
+  return results;
+}
+
 /** Notices (must-call / franchised, including a single Haul + Disposal
  *  size that's must-call on its own) drawn from a candidate row pool --
  *  the same pool used for priced results, whether that came from a
@@ -336,12 +410,13 @@ export function getQuotes(filters) {
   const hasLocation = hasCityState || !!zipEntered;
 
   if (!hasLocation) {
-    return { hasLocation: false, tier: null, results: [], note: '', cityNotices: [], estimates: [], callVendors: [] };
+    return { hasLocation: false, tier: null, results: [], note: '', cityNotices: [], estimates: [], callVendors: [], didYouMean: [] };
   }
 
   let note = '';
   let candidateRows;   // every row (any pricing model) "in" this search, before size/debris filtering
   let fallbackState;   // state to run the estimate tier against if candidateRows has nothing priceable
+  let didYouMean = [];  // typo suggestions -- only populated when a typed city matched zero rows at all
 
   if (hasCityState) {
     // City-only matching, same as always -- state disambiguates a
@@ -355,6 +430,9 @@ export function getQuotes(filters) {
           : PRICING_RULES.filter(r => r.city?.toLowerCase() === cityState.city.toLowerCase()))
       : [];
     fallbackState = cityState.state || null;
+    if (cityState.city && candidateRows.length === 0) {
+      didYouMean = citySuggestions(cityState.city, cityState.state || null, 3);
+    }
   } else {
     // Zip search: match directly against every row's own zip list first
     // (see rowsForZip for why this isn't a two-step "resolve to one
@@ -392,7 +470,7 @@ export function getQuotes(filters) {
     const items = priceableRows.map(row => ({ row, price: priceRule(row) }));
     return {
       hasLocation: true, tier: 'city', note,
-      results: groupForDisplay(items), cityNotices, estimates: [], callVendors: [],
+      results: sortByPriceDesc(groupForDisplay(items)), cityNotices, estimates: [], callVendors: [], didYouMean,
     };
   }
 
@@ -403,13 +481,13 @@ export function getQuotes(filters) {
   // vendor to call instead of the specific one already on screen.
   const hasMustCallNotice = cityNotices.some(n => n.pricingModel === 'must_call_for_pricing');
   if (hasMustCallNotice) {
-    return { hasLocation: true, tier: 'city', note, results: [], cityNotices, estimates: [], callVendors: [] };
+    return { hasLocation: true, tier: 'city', note, results: [], cityNotices, estimates: [], callVendors: [], didYouMean };
   }
 
   // No priced vendor in the exact city/zip -- a state-average estimate,
   // not another city's real vendor prices standing in for this one.
   if (!fallbackState) {
-    return { hasLocation: true, tier: 'none', note, results: [], cityNotices, estimates: [], callVendors: [] };
+    return { hasLocation: true, tier: 'none', note, results: [], cityNotices, estimates: [], callVendors: [], didYouMean };
   }
   let estimates = stateEstimates(fallbackState);
   if (filters.size && filters.size !== 'any') {
@@ -425,6 +503,7 @@ export function getQuotes(filters) {
     cityNotices,
     estimates,
     callVendors,
+    didYouMean,
   };
 }
 
