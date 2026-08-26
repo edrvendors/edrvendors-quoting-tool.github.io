@@ -23,6 +23,16 @@ function currentFilters() {
   };
 }
 
+/** The number actually quoted to the customer: 7 days by default, or the
+ *  vendor's real number if it's less. If the vendor's real number is
+ *  more than 7, that's handled separately by rentalUpsellNote() below --
+ *  shown only on-screen for the rep, never in the customer-facing copy
+ *  text -- so a new hire always quotes the safe 7, while an experienced
+ *  rep can see the vendor actually allows more and offer that instead. */
+function quotedRentalDays(rentalDays) {
+  return rentalDays != null ? Math.min(7, rentalDays) : 7;
+}
+
 function detailLine(row, price) {
   const parts = [];
   if (price.isFlat) {
@@ -30,8 +40,17 @@ function detailLine(row, price) {
   } else if (price.tons != null) {
     parts.push(`Includes ${price.tons} ton${price.tons === 1 ? '' : 's'}`);
   }
-  parts.push(price.rentalDays != null ? `${price.rentalDays} day rental` : 'Rental period: confirm with vendor');
+  parts.push(`${quotedRentalDays(price.rentalDays)} day rental`);
   return parts.join(' · ');
+}
+
+/** On-screen only (never in buildCopyText) -- tells the rep the vendor's
+ *  actual rental window when it's longer than the safe 7-day default,
+ *  so they can knowingly offer more without it being handed to the
+ *  customer as the quoted number. */
+function rentalUpsellNote(price) {
+  if (price.rentalDays == null || price.rentalDays <= 7) return '';
+  return `<div class="result-detail-row result-detail-row--muted">Vendor allows up to ${price.rentalDays} days if you'd like to offer more</div>`;
 }
 
 function overageLine(price) {
@@ -99,8 +118,8 @@ function flagPriceHref(row) {
 function cardActionsHtml() {
   return `
     <div class="card-actions">
-      <button type="button" class="icon-btn" data-copy-btn>Copy for email</button>
-      <a class="flag-link" data-flag-link target="_blank" rel="noopener">Something look off? Flag this price</a>
+      <button type="button" class="icon-btn" data-copy-btn>Copy Quote for email</button>
+      <a class="flag-link" data-flag-link target="_blank" rel="noopener">🚩 Flag this price</a>
     </div>
   `;
 }
@@ -143,6 +162,7 @@ function buildPriceBlock(row, price, { withTotalHeader }) {
   el.innerHTML = `
     ${totalHeader}
     <div class="result-detail-row" data-detail>${detailLine(row, price)}</div>
+    ${rentalUpsellNote(price)}
     ${overage ? `<div class="result-detail-row">${overage}</div>` : ''}
     ${price.isHaulPlusDisposal ? `
       <div class="adjuster">
@@ -200,6 +220,7 @@ function renderCard(entry) {
         <div class="result-total" data-total>${money(price.total)}</div>
       </div>
       <div class="result-detail-row" data-detail>${detailLine(row, price)}</div>
+      ${rentalUpsellNote(price)}
       ${overageLine(price) ? `<div class="result-detail-row">${overageLine(price)}</div>` : ''}
       ${row.debrisType ? `<div class="result-detail-row">${debrisBadge(row.debrisType)}</div>` : ''}
       ${price.isHaulPlusDisposal ? `
@@ -260,7 +281,7 @@ function noticeBanner(row) {
   if (row.pricingModel === 'must_call_for_pricing') {
     const est = row.estimate;
     const priceLine = est
-      ? `<div class="notice-banner__quote">Suggested quote: ${money(est.total)} <span class="notice-banner__quote-note">(${row.size} yd, ~${est.rentalDays}-day rental — quote this now, call the vendor for the real price before invoicing)</span></div>
+      ? `<div class="notice-banner__quote">Suggested quote: ${money(est.total)} <span class="notice-banner__quote-note">(${row.size} yd, ~${quotedRentalDays(est.rentalDays)}-day rental — quote this now, call the vendor for the real price before invoicing)</span></div>
          <div class="result-detail-row">${est.tonOverage != null ? `Extra ton (estimated): ${money(est.tonOverage)}` : 'No state-average ton rate available yet'}</div>`
       : `<div class="notice-banner__quote-note">Not enough Standard-priced vendors in ${row.state} yet to suggest a number for ${row.size} yd — call before quoting.</div>`;
     return `
@@ -293,7 +314,7 @@ function estimateCard(estimate) {
       </div>
       <div class="result-total">${money(estimate.total)}</div>
     </div>
-    <div class="result-detail-row">${estimate.rentalDays} day rental (typical) · based on the state average, not a specific vendor</div>
+    <div class="result-detail-row">${quotedRentalDays(estimate.rentalDays)} day rental (typical) · based on the state average, not a specific vendor</div>
     ${estimate.tonOverage != null ? `<div class="result-detail-row">Extra ton (estimated): ${money(estimate.tonOverage)}</div>` : ''}
   `;
   return card;
